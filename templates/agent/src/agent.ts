@@ -410,7 +410,7 @@ export class AgentSandbox extends Sandbox<Env> {
         ok: false,
         code: "model_not_configured",
         message:
-          "No model is configured. Set AI_GATEWAY_TOKEN for the build (Noite Settings -> Environment, baked in at deploy) and MODEL plus AI_GATEWAY_ACCOUNT_ID/AI_GATEWAY_ID in wrangler.jsonc vars; MODEL=faux runs a cred-less test loop.",
+          "No model is configured. Set MODEL and AI_GATEWAY_TOKEN (plus AI_GATEWAY_ACCOUNT_ID and AI_GATEWAY_ID for gateway models) in Noite Settings -> Environment and redeploy; MODEL=faux runs a cred-less test loop.",
       };
     }
     const model = this.#models?.getModel(selection.provider, selection.modelId);
