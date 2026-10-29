@@ -13,14 +13,12 @@
   "containers": [
     {
       "class_name": "AgentSandbox",
-      // Prebuilt image: the templates repo CI builds Dockerfile and pushes
-      // ghcr.io/ryuzcorp/noite-templates-agent-sandbox:<short-sha> on main.
-      // celld images have no docker CLI, so a Dockerfile reference cannot
-      // build here. dist/wrangler.json pins the exact published ref at build
-      // time from $SANDBOX_IMAGE (see scripts/build.ts); the default below
-      // tracks the latest published main. The package must be public: nodes
-      // pull without credentials.
-      "image": "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:bd42b0c",
+      // Stock Sandbox image: it already ships node, git and sh, which is
+      // everything the container tools need. Keep the tag on the same
+      // release line as the `@cloudflare/sandbox` dependency (0.12.x):
+      // the SDK checks version compatibility on startup. `$SANDBOX_IMAGE`
+      // at build time overrides this with a custom image (see scripts/build.ts).
+      "image": "docker.io/cloudflare/sandbox:0.12.9",
       "instance_type": "basic",
       "max_instances": 4
     }

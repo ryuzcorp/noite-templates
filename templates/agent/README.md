@@ -64,10 +64,11 @@ bun run build
 celld dev
 ```
 
-`bun run build` writes `dist/worker.js` and `dist/wrangler.json`. With
-`SANDBOX_IMAGE=ghcr.io/ryuzcorp/noite-templates-agent-sandbox:<tag>` set, the
-build pins the container image to that ref instead of the committed
-placeholder; CI sets it to the freshly pushed short-sha on main.
+`bun run build` writes `dist/worker.js` and `dist/wrangler.json`. The container
+is the stock `cloudflare/sandbox` image on the same release line as the
+`@cloudflare/sandbox` dependency — no image to build or publish. Setting
+`SANDBOX_IMAGE=<ref>` at build time pins a custom image instead (e.g. one
+with extra toolchain baked in).
 
 ## Routes
 

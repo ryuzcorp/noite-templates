@@ -6,12 +6,12 @@ import { build } from "esbuild";
  * Bundle src/index.ts to dist/worker.js and write the deploy-root
  * dist/wrangler.json celld deploys, derived from the committed
  * wrangler.jsonc (never handwritten): `main` becomes deploy-root-relative,
- * the container image pins to $SANDBOX_IMAGE when set (CI pushes a
- * sha-tagged image on main), and `vars` carry over from the committed
- * config. Noite app env vars never reach Worker code at runtime, so runtime
- * values (MODEL, AI_GATEWAY_*) live in vars; $AI_GATEWAY_TOKEN at build
- * time (Settings -> Environment reaches the build) overrides the committed
- * placeholder without touching git.
+ * the container image pins to $SANDBOX_IMAGE when set (a custom image with
+ * extra toolchain; default is the stock cloudflare/sandbox image), and
+ * `vars` carry over from the committed config. Noite app env vars never
+ * reach Worker code at runtime, so runtime values (MODEL, AI_GATEWAY_*)
+ * live in vars; $AI_GATEWAY_TOKEN at build time (Settings -> Environment
+ * reaches the build) overrides the committed placeholder without touching git.
  */
 
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
