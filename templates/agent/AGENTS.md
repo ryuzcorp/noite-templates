@@ -26,5 +26,6 @@ one container + one durable conversation.
 - Pure helpers live in `src/model.ts` / `src/transcript.ts` /
   `scripts/build.ts` with unit tests in `test/`.
 - `wrangler.jsonc` keeps only keys celld accepts (plus `containers`); the
-  build allowlists them into `dist/wrangler.json`, rewrites `main`, zeroes
-  `vars`, and pins the image from `$SANDBOX_IMAGE` when set.
+  build allowlists them into `dist/wrangler.json`, rewrites `main`, carries
+  `vars` through (Worker code cannot see app env vars), and overrides the
+  container image from `$SANDBOX_IMAGE` when set.
