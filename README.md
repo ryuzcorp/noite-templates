@@ -6,6 +6,7 @@ The starters every [Noite](https://github.com/ryuzcorp/noite) app begins from. `
 | --- | --- | --- |
 | `ilha-void` | [`templates/ilha-void`](templates/ilha-void) | Ilha pages on Void (Vite), served by celld. |
 | `tanstack-start` | [`templates/tanstack-start`](templates/tanstack-start) | TanStack Start (Vite + the Cloudflare plugin) serving SSR. |
+| `agent` | [`templates/agent`](templates/agent) | Pi Durable agent in a Worker DO, tools in a Sandbox container on celld. |
 
 Each folder is a complete project with its own `package.json`, `AGENTS.md` and checks (`bun run check`).
 

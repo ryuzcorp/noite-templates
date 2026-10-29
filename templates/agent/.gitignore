@@ -1,0 +1,26 @@
+# dependencies (bun install)
+node_modules
+
+# output
+dist
+.wrangler
+
+# local environment: app env vars for `celld dev` live here, never committed
+.dev.vars
+.dev.vars*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+
+# logs
+logs
+*.log
+
+# caches
+.cache
+*.tsbuildinfo
+
+# editors
+.idea
+.DS_Store

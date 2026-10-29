@@ -1,0 +1,6 @@
+# Local-only env for `celld dev`. Copy to .dev.vars and fill in.
+# Never commit .dev.vars (it holds the real token).
+MODEL=workers-ai/@cf/moonshotai/kimi-k2.6
+AI_GATEWAY_ACCOUNT_ID=replace-me
+AI_GATEWAY_ID=replace-me
+AI_GATEWAY_TOKEN=

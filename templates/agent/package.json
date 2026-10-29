@@ -1,0 +1,27 @@
+{
+  "name": "noite-template-agent",
+  "private": true,
+  "license": "MIT-0",
+  "sideEffects": false,
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/build.ts && celld dev",
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun run build && bun run test"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "0.12.9",
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5",
+    "@types/bun": "^1.4.2",
+    "esbuild": "^0.25.0",
+    "typescript": "^7"
+  }
+}
