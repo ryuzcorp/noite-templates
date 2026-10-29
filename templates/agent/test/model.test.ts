@@ -8,20 +8,12 @@ describe("parseModelRef", () => {
     expect(parseModelRef(" FAUX ")).toEqual({ kind: "faux" });
   });
 
-  test("anything else is a gateway model id", () => {
-    expect(parseModelRef("workers-ai/@cf/moonshotai/kimi-k2.6")).toEqual({
-      kind: "gateway",
-      provider: "cloudflare-ai-gateway",
-      modelId: "workers-ai/@cf/moonshotai/kimi-k2.6",
-    });
+  test("anything else is an OpenAI-compatible model id", () => {
+    expect(parseModelRef("gpt-5-mini")).toEqual({ kind: "openai", modelId: "gpt-5-mini" });
   });
 
   test("empty never silently enters test mode", () => {
-    expect(parseModelRef("")).toEqual({
-      kind: "gateway",
-      provider: "cloudflare-ai-gateway",
-      modelId: "",
-    });
-    expect(parseModelRef(undefined)).toMatchObject({ kind: "gateway" });
+    expect(parseModelRef("")).toEqual({ kind: "openai", modelId: "" });
+    expect(parseModelRef(undefined)).toMatchObject({ kind: "openai" });
   });
 });

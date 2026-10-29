@@ -1,13 +1,14 @@
 import type { AgentSandbox } from "./agent";
 
-/** Worker environment. Secrets arrive only as app env vars (Noite Settings
- * -> Environment); they are never committed and never baked into the build. */
+/** Worker environment. Runtime values are baked from Settings -> Environment
+ * at build time (Worker code cannot see app env vars); they are never
+ * committed. */
 export interface Env {
   AgentSandbox: DurableObjectNamespace<AgentSandbox>;
-  /** Model id inside the cloudflare-ai-gateway catalog, or exactly "faux". */
+  /** Model id for the OpenAI-compatible provider, or exactly "faux". */
   MODEL?: string;
-  AI_GATEWAY_ACCOUNT_ID?: string;
-  AI_GATEWAY_ID?: string;
-  /** Cloudflare API token for the AI Gateway. Secret: app env vars only. */
-  AI_GATEWAY_TOKEN?: string;
+  /** Any OpenAI-compatible chat-completions base URL (default api.openai.com). */
+  OPENAI_BASE_URL?: string;
+  /** API key for the endpoint. Secret: Settings only, baked at build. */
+  OPENAI_API_KEY?: string;
 }

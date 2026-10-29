@@ -20,9 +20,10 @@ restarts and evictions), and the model's tools (`exec`, `read_file`,
 - `scripts/build.ts` — esbuild bundle to `dist/worker.js` plus the
   deploy-root `dist/wrangler.json` derived from `wrangler.jsonc`.
 
-Model calls stay in the Worker (pi-ai `cloudflare-ai-gateway` provider, token
-in Worker env). The container is the tool backend only: it runs the checked
-out repo and the agent's commands, and never sees credentials.
+Model calls stay in the Worker (pi-ai `openai` provider pointed at any
+OpenAI-compatible endpoint, token in Worker env). The container is the tool
+backend only: it runs the checked out repo and the agent's commands, and
+never sees credentials.
 
 ## Engine requirement
 
@@ -43,10 +44,9 @@ works with no credentials at all). Never commit real values.
 
 | Var | Required | What |
 | --- | --- | --- |
-| `MODEL` | yes | Model id inside the `cloudflare-ai-gateway` catalog, e.g. `workers-ai/@cf/moonshotai/kimi-k2.6`. The exact value `faux` selects pi-ai's faux provider instead. |
-| `AI_GATEWAY_ACCOUNT_ID` | for gateway | Cloudflare account id for the AI Gateway. |
-| `AI_GATEWAY_ID` | for gateway | AI Gateway id. |
-| `AI_GATEWAY_TOKEN` | for gateway | Cloudflare API token. Secret: Settings only, baked at build, never committed. |
+| `MODEL` | yes | Model id, e.g. `gpt-5-mini`. The exact value `faux` selects pi-ai's faux provider instead. On a custom endpoint any id works (limits are approximated). |
+| `OPENAI_BASE_URL` | no | Any OpenAI-compatible chat-completions base URL (default `https://api.openai.com/v1`). AI Gateway users point this at `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai`. |
+| `OPENAI_API_KEY` | for real models | API key for the endpoint. Secret: Settings only, baked at build, never committed. |
 
 `MODEL=faux` is test-only: scripted answers, no credentials, but the full
 durable loop (submit -> generation -> answer) still runs against the real
@@ -75,8 +75,7 @@ isolated container + conversation.
 | Method + path | Body | Result |
 | --- | --- | --- |
 | `GET /` | — | Human page: name, repo, task, state, diff forms. |
-| `POST /sandboxes/:name/repository` | `{url, ref?}` | Clone (shallow) or refresh the checkout at `/workspace/repo`. -> `{commit?}` |
-| `POST /sandboxes/:name/task` | `{text}` or raw text | Submit task text, wait for the answer. -> `{answer, transcript}`. 503 without gateway creds. |
+| `POST /sandboxes/:name/task` | `{text}` or raw text | Submit task text, wait for the answer. -> `{answer, transcript}`. 503 without an API key. |
 | `GET /sandboxes/:name/task` | — | `{busy, model, repository, transcript}`. No model calls. |
 | `GET /sandboxes/:name/diff` | — | `{commit, status, diff}` from `git` in the container. 409 with no repo. |
 

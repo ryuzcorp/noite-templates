@@ -9,9 +9,9 @@ import { build } from "esbuild";
  * the container image pins to $SANDBOX_IMAGE when set (default is the
  * stock cloudflare/sandbox image), and `vars` carry over from the
  * committed config. Noite app env vars never reach Worker code at runtime,
- * so every runtime value (MODEL, AI_GATEWAY_*) is set in Settings ->
- * Environment and baked in here at build time; the committed vars are
- * only fallbacks. Nothing is committed: overrides never touch git.
+ * so every AI value (MODEL, OPENAI_API_KEY, OPENAI_BASE_URL) is set in
+ * Settings -> Environment and baked in here at build time; the committed
+ * vars are only fallbacks. Nothing is committed: overrides never touch git.
  */
 
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
@@ -89,10 +89,9 @@ export function stripJsonc(source: string): string {
 /** Build-time env that overrides the committed config (Settings ->
  * Environment reaches the build; Worker code never sees app env vars). */
 export interface BuildEnv {
-  readonly AI_GATEWAY_ACCOUNT_ID?: string | undefined;
-  readonly AI_GATEWAY_ID?: string | undefined;
-  readonly AI_GATEWAY_TOKEN?: string | undefined;
   readonly MODEL?: string | undefined;
+  readonly OPENAI_API_KEY?: string | undefined;
+  readonly OPENAI_BASE_URL?: string | undefined;
   readonly SANDBOX_IMAGE?: string | undefined;
 }
 
@@ -124,12 +123,7 @@ export function deriveCelldConfig(
     config["vars"] !== undefined && typeof config["vars"] === "object" && config["vars"] !== null
       ? (config["vars"] as Record<string, unknown>)
       : {};
-  for (const key of [
-    "MODEL",
-    "AI_GATEWAY_TOKEN",
-    "AI_GATEWAY_ACCOUNT_ID",
-    "AI_GATEWAY_ID",
-  ] as const) {
+  for (const key of ["MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const) {
     const value = buildEnv[key]?.trim();
     if (value !== undefined && value !== "") {
       vars[key] = value;
@@ -143,10 +137,9 @@ async function main(): Promise<void> {
   const raw = readFileSync(path.join(APP_ROOT, "wrangler.jsonc"), "utf-8");
   const parsed = JSON.parse(stripJsonc(raw)) as Record<string, unknown>;
   const config = deriveCelldConfig(parsed, {
-    AI_GATEWAY_ACCOUNT_ID: process.env["AI_GATEWAY_ACCOUNT_ID"],
-    AI_GATEWAY_ID: process.env["AI_GATEWAY_ID"],
-    AI_GATEWAY_TOKEN: process.env["AI_GATEWAY_TOKEN"],
     MODEL: process.env["MODEL"],
+    OPENAI_API_KEY: process.env["OPENAI_API_KEY"],
+    OPENAI_BASE_URL: process.env["OPENAI_BASE_URL"],
     SANDBOX_IMAGE: process.env["SANDBOX_IMAGE"],
   });
   mkdirSync(path.join(APP_ROOT, "dist"), { recursive: true });
