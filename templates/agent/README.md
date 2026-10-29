@@ -27,12 +27,13 @@ never sees credentials.
 
 ## Engine requirement
 
-The fleet host needs a container engine: every node that serves a container
-class needs a Docker or Podman daemon (`DOCKER_HOST`, or the default socket).
-A node without an engine cannot activate the `AgentSandbox` cell. Containers
-start with internet access on (`enableInternet` defaults to true in the SDK;
-celld fences the container off the node, other nodes, and private ranges),
-which `git clone` needs. That is the tradeoff: outbound code you did not write
+None for you: the Noite install ships the engine. The image carries the
+`docker` CLI and compose mounts the host daemon socket (`DOCKER_SOCKET`,
+default `/var/run/docker.sock`) with `DOCKER_HOST` for celld; fleets inherit
+it. Rootless-podman hosts point both at their socket. Containers start with
+internet access on (`enableInternet` defaults to true in the SDK; celld
+fences the container off the node, other nodes, and private ranges), which
+`git clone` needs. That is the tradeoff: outbound code you did not write
 runs in the container, so keep the secrets in the Worker.
 
 ## Environment
