@@ -1,0 +1,36 @@
+{
+  "$schema": "https://developers.cloudflare.com/schemas/wrangler.jsonc",
+  // Worker name celld serves the app as.
+  "name": "noite-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "AgentSandbox", "class_name": "AgentSandbox" }]
+  },
+  // SQLite-backed DO: the harness transcript lives in the object's storage.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentSandbox"] }],
+  "containers": [
+    {
+      "class_name": "AgentSandbox",
+      // Prebuilt image: the templates repo CI builds Dockerfile and pushes
+      // ghcr.io/ryuzcorp/noite-templates-agent-sandbox:<short-sha> on main.
+      // celld images have no docker CLI, so a Dockerfile reference cannot
+      // build here. dist/wrangler.json pins the exact pushed ref at build
+      // time from $SANDBOX_IMAGE (see scripts/build.ts).
+      "image": "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:latest",
+      "instance_type": "basic",
+      "max_instances": 4
+    }
+  ],
+  "vars": {
+    // Model id inside the cloudflare-ai-gateway provider catalog
+    // (e.g. "workers-ai/@cf/moonshotai/kimi-k2.6"). The exact value "faux"
+    // selects pi-ai's faux provider: scripted answers, no credentials.
+    "MODEL": "workers-ai/@cf/moonshotai/kimi-k2.6",
+    // Cloudflare AI Gateway routing; the token lives in the secret
+    // AI_GATEWAY_TOKEN (Noite Settings -> Environment), never here.
+    "AI_GATEWAY_ACCOUNT_ID": "replace-me",
+    "AI_GATEWAY_ID": "replace-me"
+  }
+}
