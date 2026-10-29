@@ -1,0 +1,12 @@
+@import "tailwindcss" source("../");
+
+/* Shared by every Noite template, so they look the same whatever the stack. */
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+  }
+}

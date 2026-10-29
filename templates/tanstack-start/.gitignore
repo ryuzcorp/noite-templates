@@ -1,0 +1,28 @@
+# dependencies (bun install)
+node_modules
+
+# output
+dist
+.wrangler
+.output
+.tanstack
+
+# TanStack Start generates the route tree from src/routes/*
+src/routeTree.gen.ts
+
+# logs
+logs
+*.log
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
+
+# caches
+.cache
+*.tsbuildinfo
+
+# editors
+.idea
+.DS_Store

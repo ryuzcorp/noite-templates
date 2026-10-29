@@ -1,0 +1,36 @@
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+.void
+.wrangler
+.dev.vars
+.dev.vars*
+
+# local environment
+.env
+.env.*
+!.env.example
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+*.log
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# editors
+.idea
+.DS_Store
+
+# void local state
+.void-wrangler.jsonc
