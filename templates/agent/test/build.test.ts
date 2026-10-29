@@ -19,28 +19,42 @@ describe("deriveCelldConfig", () => {
         unknownKey: true,
         containers: [{ class_name: "AgentSandbox", image: "placeholder" }],
       },
-      "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:abc1234",
-      undefined
+      { SANDBOX_IMAGE: "docker.io/cloudflare/sandbox:0.12.9" },
     );
     expect(config["main"]).toBe("worker.js");
     expect(config["vars"]).toEqual({ MODEL: "x" });
     expect(config["unknownKey"]).toBeUndefined();
     expect(config["containers"]).toEqual([
-      { class_name: "AgentSandbox", image: "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:abc1234" },
+      { class_name: "AgentSandbox", image: "docker.io/cloudflare/sandbox:0.12.9" },
     ]);
   });
 
-  test("a build-time token overrides the committed placeholder", () => {
+  test("Settings env bakes every AI var over the committed fallbacks", () => {
     const config = deriveCelldConfig(
-      { vars: { MODEL: "x", AI_GATEWAY_TOKEN: "placeholder" } },
-      undefined,
-      "build-time-token"
+      { vars: { MODEL: "committed", AI_GATEWAY_TOKEN: "placeholder" } },
+      {
+        AI_GATEWAY_ACCOUNT_ID: "acct",
+        AI_GATEWAY_ID: "gw",
+        AI_GATEWAY_TOKEN: "build-time-token",
+        MODEL: "custom-model",
+      },
     );
-    expect(config["vars"]).toEqual({ MODEL: "x", AI_GATEWAY_TOKEN: "build-time-token" });
+    expect(config["vars"]).toEqual({
+      AI_GATEWAY_ACCOUNT_ID: "acct",
+      AI_GATEWAY_ID: "gw",
+      AI_GATEWAY_TOKEN: "build-time-token",
+      MODEL: "custom-model",
+    });
   });
 
-  test("missing vars become an empty object, never dropped", () => {
-    const config = deriveCelldConfig({}, undefined, undefined);
-    expect(config["vars"]).toEqual({});
+  test("empty build env leaves committed vars alone; missing vars become {}", () => {
+    const config = deriveCelldConfig({ vars: { MODEL: "x" } }, {});
+    expect(config["vars"]).toEqual({ MODEL: "x" });
+    expect(deriveCelldConfig({})["vars"]).toEqual({});
+  });
+
+  test("keeps the committed image without an override", () => {
+    const config = deriveCelldConfig({ containers: [{ image: "keep" }] }, {});
+    expect(config["containers"]).toEqual([{ image: "keep" }]);
   });
 });

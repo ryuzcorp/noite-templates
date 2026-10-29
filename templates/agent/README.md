@@ -36,20 +36,17 @@ runs in the container, so keep the secrets in the Worker.
 
 ## Environment
 
-Noite app env vars (Settings -> Environment) reach the build and the fleet,
-never Worker code: `env` has no entry for them and `process.env` is empty at
-runtime. Runtime values therefore live in `vars` in the committed
-`wrangler.jsonc`; the build carries them into `dist/wrangler.json` unchanged.
+Set these in Noite (Settings -> Environment) and redeploy: the build bakes
+them into `dist/wrangler.json` vars, so Worker code sees them at runtime.
+The committed `wrangler.jsonc` values are only fallbacks (and `MODEL=faux`
+works with no credentials at all). Never commit real values.
 
-| Var | Where | What |
+| Var | Required | What |
 | --- | --- | --- |
-| `MODEL` | `wrangler.jsonc` vars | Model id inside the `cloudflare-ai-gateway` catalog, e.g. `workers-ai/@cf/moonshotai/kimi-k2.6`. The exact value `faux` selects pi-ai's faux provider instead. |
-| `AI_GATEWAY_ACCOUNT_ID` | `wrangler.jsonc` vars | Cloudflare account id for the AI Gateway. |
-| `AI_GATEWAY_ID` | `wrangler.jsonc` vars | AI Gateway id. |
-| `AI_GATEWAY_TOKEN` | build env, then vars | Cloudflare API token. Set it in Settings -> Environment (it reaches the build, which bakes it into `dist/wrangler.json` vars at deploy); never commit it. |
-
-Without `AI_GATEWAY_TOKEN` (and `MODEL` not `faux`), `POST /task` fails
-cleanly with 503 `model not configured`.
+| `MODEL` | yes | Model id inside the `cloudflare-ai-gateway` catalog, e.g. `workers-ai/@cf/moonshotai/kimi-k2.6`. The exact value `faux` selects pi-ai's faux provider instead. |
+| `AI_GATEWAY_ACCOUNT_ID` | for gateway | Cloudflare account id for the AI Gateway. |
+| `AI_GATEWAY_ID` | for gateway | AI Gateway id. |
+| `AI_GATEWAY_TOKEN` | for gateway | Cloudflare API token. Secret: Settings only, baked at build, never committed. |
 
 `MODEL=faux` is test-only: scripted answers, no credentials, but the full
 durable loop (submit -> generation -> answer) still runs against the real
