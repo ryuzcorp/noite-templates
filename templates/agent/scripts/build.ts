@@ -7,8 +7,11 @@ import { build } from "esbuild";
  * dist/wrangler.json celld deploys, derived from the committed
  * wrangler.jsonc (never handwritten): `main` becomes deploy-root-relative,
  * the container image pins to $SANDBOX_IMAGE when set (CI pushes a
- * sha-tagged image on main), and `vars` reset to {} (Noite patches the
- * app's real env at deploy time; secrets never land in dist/).
+ * sha-tagged image on main), and `vars` carry over from the committed
+ * config. Noite app env vars never reach Worker code at runtime, so runtime
+ * values (MODEL, AI_GATEWAY_*) live in vars; $AI_GATEWAY_TOKEN at build
+ * time (Settings -> Environment reaches the build) overrides the committed
+ * placeholder without touching git.
  */
 
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
@@ -86,7 +89,8 @@ export function stripJsonc(source: string): string {
 /** Derive the deploy config from parsed wrangler.jsonc. Pure: unit-tested. */
 export function deriveCelldConfig(
   parsed: Record<string, unknown>,
-  imageOverride: string | undefined
+  imageOverride: string | undefined,
+  tokenOverride: string | undefined
 ): Record<string, unknown> {
   const config: Record<string, unknown> = {};
   for (const key of CELLD_KEYS) {
@@ -106,14 +110,25 @@ export function deriveCelldConfig(
     }
     (first as Record<string, unknown>)["image"] = imageOverride;
   }
-  config["vars"] = {};
+  const vars =
+    config["vars"] !== undefined && typeof config["vars"] === "object" && config["vars"] !== null
+      ? (config["vars"] as Record<string, unknown>)
+      : {};
+  if (tokenOverride !== undefined && tokenOverride !== "") {
+    vars["AI_GATEWAY_TOKEN"] = tokenOverride;
+  }
+  config["vars"] = vars;
   return config;
 }
 
 async function main(): Promise<void> {
   const raw = readFileSync(path.join(APP_ROOT, "wrangler.jsonc"), "utf-8");
   const parsed = JSON.parse(stripJsonc(raw)) as Record<string, unknown>;
-  const config = deriveCelldConfig(parsed, process.env["SANDBOX_IMAGE"]?.trim() || undefined);
+  const config = deriveCelldConfig(
+    parsed,
+    process.env["SANDBOX_IMAGE"]?.trim() || undefined,
+    process.env["AI_GATEWAY_TOKEN"]?.trim() || undefined
+  );
 
   mkdirSync(path.join(APP_ROOT, "dist"), { recursive: true });
   writeFileSync(

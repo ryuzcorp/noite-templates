@@ -10,7 +10,7 @@ describe("stripJsonc", () => {
 });
 
 describe("deriveCelldConfig", () => {
-  test("keeps the allowlist, rewrites main, zeroes vars, pins the image", () => {
+  test("keeps the allowlist, rewrites main, keeps vars, pins the image", () => {
     const config = deriveCelldConfig(
       {
         name: "noite-agent",
@@ -19,18 +19,28 @@ describe("deriveCelldConfig", () => {
         unknownKey: true,
         containers: [{ class_name: "AgentSandbox", image: "placeholder" }],
       },
-      "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:abc1234"
+      "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:abc1234",
+      undefined
     );
     expect(config["main"]).toBe("worker.js");
-    expect(config["vars"]).toEqual({});
+    expect(config["vars"]).toEqual({ MODEL: "x" });
     expect(config["unknownKey"]).toBeUndefined();
     expect(config["containers"]).toEqual([
       { class_name: "AgentSandbox", image: "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:abc1234" },
     ]);
   });
 
-  test("keeps the committed image without an override", () => {
-    const config = deriveCelldConfig({ containers: [{ image: "keep" }] }, undefined);
-    expect(config["containers"]).toEqual([{ image: "keep" }]);
+  test("a build-time token overrides the committed placeholder", () => {
+    const config = deriveCelldConfig(
+      { vars: { MODEL: "x", AI_GATEWAY_TOKEN: "placeholder" } },
+      undefined,
+      "build-time-token"
+    );
+    expect(config["vars"]).toEqual({ MODEL: "x", AI_GATEWAY_TOKEN: "build-time-token" });
+  });
+
+  test("missing vars become an empty object, never dropped", () => {
+    const config = deriveCelldConfig({}, undefined, undefined);
+    expect(config["vars"]).toEqual({});
   });
 });
