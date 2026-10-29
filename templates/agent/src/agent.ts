@@ -8,7 +8,7 @@ import {
   type Message,
   type MutableModels,
 } from "@earendil-works/pi-ai";
-import { cloudflareAIGatewayProvider } from "@earendil-works/pi-ai/providers/cloudflare-ai-gateway";
+import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import {
   fauxProvider,
   type FauxProviderHandle,
@@ -25,7 +25,7 @@ import {
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 
 import type { Env } from "./env";
-import { parseModelRef } from "./model";
+import { OPENAI_PROVIDER, parseModelRef } from "./model";
 import { extractLastUserText, renderMessages, truncateText } from "./transcript";
 
 /**
@@ -236,27 +236,42 @@ export class AgentSandbox extends Sandbox<Env> {
 
     const authContext: AuthContext = {
       env: async (name) => {
-        // pi-ai's gateway auth reads CLOUDFLARE_* names; map them onto the
-        // app env vars so the token stays in Worker env, never in code.
-        if (name === "CLOUDFLARE_API_KEY") {
-          return nonEmpty(sandbox.#env.AI_GATEWAY_TOKEN);
-        }
-        if (name === "CLOUDFLARE_ACCOUNT_ID") {
-          return nonEmpty(sandbox.#env.AI_GATEWAY_ACCOUNT_ID);
-        }
-        if (name === "CLOUDFLARE_GATEWAY_ID") {
-          return nonEmpty(sandbox.#env.AI_GATEWAY_ID);
+        // pi-ai's OpenAI auth reads OPENAI_API_KEY; serve it from the app
+        // env vars so the token stays in Worker env, never in code.
+        if (name === "OPENAI_API_KEY") {
+          return nonEmpty(sandbox.#env.OPENAI_API_KEY);
         }
         return undefined;
       },
       fileExists: async () => false,
     };
     const models = createModels({ authContext });
-    models.setProvider(cloudflareAIGatewayProvider());
-    const faux = fauxProvider();
-    models.setProvider(faux.provider);
-    this.#models = models;
-    this.#faux = faux;
+    const openai = openaiProvider();
+    // Any OpenAI-compatible endpoint works (OpenAI, Azure, Ollama, vLLM,
+    // OpenRouter, AI Gateway's /openai route, ...). The catalog is
+    // authoritative for api.openai.com only: on a custom endpoint any model
+    // id is accepted, reusing a sibling entry's limits (approximations).
+    const endpoint = nonEmpty(sandbox.#env.OPENAI_BASE_URL);
+    const selected = parseModelRef(sandbox.#env.MODEL);
+    models.setProvider({
+      ...openai,
+      ...(endpoint === undefined ? {} : { baseUrl: endpoint }),
+      getModels: () => {
+        const known = openai.getModels();
+        if (
+          endpoint !== undefined &&
+          selected.kind === "openai" &&
+          selected.modelId !== "" &&
+          !known.some((model) => model.id === selected.modelId)
+        ) {
+          const donor = known.find((model) => model.id === "gpt-5-mini") ?? known[0];
+          if (donor !== undefined) {
+            return [...known, { ...donor, id: selected.modelId, name: selected.modelId }];
+          }
+        }
+        return known;
+      },
+    });
 
     const execTool = defineTool({
       name: "exec",
@@ -384,8 +399,9 @@ export class AgentSandbox extends Sandbox<Env> {
 
   /**
    * Root conversation with the configured model, or the reason no model is
-   * usable: gateway without a token, or an id outside the gateway catalog.
-   * Faux mode always resolves (test-only scripted answers, real container).
+   * usable: no API key, an empty id, or (on api.openai.com) an id outside
+   * the OpenAI catalog. Custom endpoints accept any id. Faux mode always
+   * resolves (test-only scripted answers, real container).
    */
   async #resolveConversation(): Promise<
     | { ok: true; root: Conversation }
@@ -405,24 +421,24 @@ export class AgentSandbox extends Sandbox<Env> {
       }]);
       return { ok: true, root };
     }
-    if (nonEmpty(this.#env.AI_GATEWAY_TOKEN) === undefined) {
+    if (nonEmpty(this.#env.OPENAI_API_KEY) === undefined) {
       return {
         ok: false,
         code: "model_not_configured",
         message:
-          "No model is configured. Set MODEL and AI_GATEWAY_TOKEN (plus AI_GATEWAY_ACCOUNT_ID and AI_GATEWAY_ID for gateway models) in Noite Settings -> Environment and redeploy; MODEL=faux runs a cred-less test loop.",
+          "No model is configured. Set OPENAI_API_KEY and MODEL in Noite Settings -> Environment and redeploy (OPENAI_BASE_URL selects any OpenAI-compatible endpoint, default api.openai.com); MODEL=faux runs a cred-less test loop.",
       };
     }
-    const model = this.#models?.getModel(selection.provider, selection.modelId);
+    const model = this.#models?.getModel(OPENAI_PROVIDER, selection.modelId);
     if (model === undefined) {
       return {
         ok: false,
         code: "unknown_model",
-        message: `Model "${selection.modelId}" is not in the ${selection.provider} catalog.`,
+        message: `Model "${selection.modelId}" is not in the OpenAI catalog (custom endpoints accept any id).`,
       };
     }
     const root = await harness.root(BACKGROUND_CONTEXT);
-    await this.#ensureModel(root, { provider: selection.provider, modelId: selection.modelId });
+    await this.#ensureModel(root, { provider: OPENAI_PROVIDER, modelId: selection.modelId });
     return { ok: true, root };
   }
 

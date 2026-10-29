@@ -24,13 +24,14 @@
     }
   ],
   "vars": {
-    // Model id inside the cloudflare-ai-gateway provider catalog
-    // (e.g. "workers-ai/@cf/moonshotai/kimi-k2.6"). The exact value "faux"
-    // selects pi-ai's faux provider: scripted answers, no credentials.
-    "MODEL": "workers-ai/@cf/moonshotai/kimi-k2.6",
-    // Cloudflare AI Gateway routing; the token lives in the secret
-    // AI_GATEWAY_TOKEN (Noite Settings -> Environment), never here.
-    "AI_GATEWAY_ACCOUNT_ID": "replace-me",
-    "AI_GATEWAY_ID": "replace-me"
+    // Model id for the OpenAI-compatible provider (e.g. "gpt-5-mini"). The
+    // exact value "faux" selects pi-ai's faux provider: scripted answers,
+    // no credentials.
+    "MODEL": "gpt-5-mini",
+    // Any OpenAI-compatible chat-completions base URL. The token lives in
+    // the secret OPENAI_API_KEY (Noite Settings -> Environment), never here.
+    // AI Gateway users point this at
+    // https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai
+    "OPENAI_BASE_URL": "https://api.openai.com/v1"
   }
 }

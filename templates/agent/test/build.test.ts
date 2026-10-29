@@ -31,19 +31,17 @@ describe("deriveCelldConfig", () => {
 
   test("Settings env bakes every AI var over the committed fallbacks", () => {
     const config = deriveCelldConfig(
-      { vars: { MODEL: "committed", AI_GATEWAY_TOKEN: "placeholder" } },
+      { vars: { MODEL: "committed", OPENAI_API_KEY: "placeholder" } },
       {
-        AI_GATEWAY_ACCOUNT_ID: "acct",
-        AI_GATEWAY_ID: "gw",
-        AI_GATEWAY_TOKEN: "build-time-token",
         MODEL: "custom-model",
-      },
+        OPENAI_API_KEY: "build-time-token",
+        OPENAI_BASE_URL: "https://gateway.example/openai",
+      }
     );
     expect(config["vars"]).toEqual({
-      AI_GATEWAY_ACCOUNT_ID: "acct",
-      AI_GATEWAY_ID: "gw",
-      AI_GATEWAY_TOKEN: "build-time-token",
       MODEL: "custom-model",
+      OPENAI_API_KEY: "build-time-token",
+      OPENAI_BASE_URL: "https://gateway.example/openai",
     });
   });
 

@@ -21,8 +21,8 @@ one container + one durable conversation.
   state lives in `AgentSandbox` (`src/agent.ts`).
 - Tools close over the DO instance (`sandbox.exec`, `readFile`, `writeFile`).
   They return `{ output: [{ type: "text", text }], isError? }`.
-- Secrets only via Worker env (`AI_GATEWAY_TOKEN`); pi-ai's gateway auth reads
-  them through a custom `authContext` mapping in `agent.ts`. Never log env.
+- Secrets only via Worker env (`OPENAI_API_KEY`); pi-ai's OpenAI auth reads
+  it through a custom `authContext` mapping in `agent.ts`. Never log env.
 - Pure helpers live in `src/model.ts` / `src/transcript.ts` /
   `scripts/build.ts` with unit tests in `test/`.
 - `wrangler.jsonc` keeps only keys celld accepts (plus `containers`); the
