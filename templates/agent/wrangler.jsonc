@@ -16,9 +16,11 @@
       // Prebuilt image: the templates repo CI builds Dockerfile and pushes
       // ghcr.io/ryuzcorp/noite-templates-agent-sandbox:<short-sha> on main.
       // celld images have no docker CLI, so a Dockerfile reference cannot
-      // build here. dist/wrangler.json pins the exact pushed ref at build
-      // time from $SANDBOX_IMAGE (see scripts/build.ts).
-      "image": "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:latest",
+      // build here. dist/wrangler.json pins the exact published ref at build
+      // time from $SANDBOX_IMAGE (see scripts/build.ts); the default below
+      // tracks the latest published main. The package must be public: nodes
+      // pull without credentials.
+      "image": "ghcr.io/ryuzcorp/noite-templates-agent-sandbox:bd42b0c",
       "instance_type": "basic",
       "max_instances": 4
     }

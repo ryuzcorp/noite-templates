@@ -24,3 +24,4 @@ logs
 # editors
 .idea
 .DS_Store
+.celld/
