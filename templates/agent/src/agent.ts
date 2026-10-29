@@ -25,7 +25,7 @@ import {
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 
 import type { Env } from "./env";
-import { OPENAI_PROVIDER, parseModelRef } from "./model";
+import { OPENAI_PROVIDER, parseModelRef, withEndpointModels } from "./model";
 import { extractLastUserText, renderMessages, truncateText } from "./transcript";
 
 /**
@@ -248,31 +248,16 @@ export class AgentSandbox extends Sandbox<Env> {
     const models = createModels({ authContext });
     const openai = openaiProvider();
     // Any OpenAI-compatible endpoint works (OpenAI, Azure, Ollama, vLLM,
-    // OpenRouter, AI Gateway's /openai route, ...). The catalog is
-    // authoritative for api.openai.com only: on a custom endpoint any model
-    // id is accepted, reusing a sibling entry's limits (approximations).
+    // OpenRouter, AI Gateway's /openai route, ...); see withEndpointModels.
     const endpoint = nonEmpty(sandbox.#env.OPENAI_BASE_URL);
     const selected = parseModelRef(sandbox.#env.MODEL);
-    models.setProvider({
-      ...openai,
-      ...(endpoint === undefined ? {} : { baseUrl: endpoint }),
-      getModels: () => {
-        const known = openai.getModels();
-        if (
-          endpoint !== undefined &&
-          selected.kind === "openai" &&
-          selected.modelId !== "" &&
-          !known.some((model) => model.id === selected.modelId)
-        ) {
-          const donor = known.find((model) => model.id === "gpt-5-mini") ?? known[0];
-          if (donor !== undefined) {
-            return [...known, { ...donor, id: selected.modelId, name: selected.modelId }];
-          }
-        }
-        return known;
-      },
-    });
-
+    models.setProvider(
+      withEndpointModels(openai, endpoint, selected.kind === "openai" ? selected.modelId : "")
+    );
+    const faux = fauxProvider();
+    models.setProvider(faux.provider);
+    this.#models = models;
+    this.#faux = faux;
     const execTool = defineTool({
       name: "exec",
       description: `Run a shell command in the sandbox container (cwd ${REPO_DIR}). Returns stdout, stderr, and the exit code.`,
