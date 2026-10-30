@@ -1,6 +1,14 @@
 /** Model selection parsed from the MODEL env var. Pure: unit-tested. */
 
-import type { Provider } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  type ApiStreamOptions,
+  type Model,
+  type Provider,
+  type SimpleStreamOptions,
+  type TranscriptContext,
+} from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 export const OPENAI_PROVIDER = "openai" as const;
 
 export type ModelSelection = { kind: "openai"; modelId: string } | { kind: "faux" };
@@ -25,34 +33,64 @@ export function parseModelRef(raw: string | undefined | null): ModelSelection {
 /** Donor entry custom-endpoint ids clone (limits are approximations). */
 export const DONOR_MODEL_ID = "gpt-5-mini";
 
+/** Chat API every OpenAI-compatible endpoint speaks (OpenAI, Azure, Ollama, vLLM, OpenRouter, ...). */
+const COMPLETIONS_API = "openai-completions" as const;
+
 /**
  * Wrap an OpenAI-compatible provider for one endpoint: the catalog stays
  * authoritative without an endpoint (unknown ids fail closed, catching
  * typos), while a custom endpoint registers any non-empty selected id by
  * cloning the donor entry. Wrapping (not mutating) keeps the shared base
  * provider intact. Pure: unit-tested.
+ *
+ * pi-ai dispatches on the MODEL entry (`model.api` picks the implementation,
+ * `model.baseUrl` the host): a provider-level `baseUrl` spread is silently
+ * ignored and the stock openai provider only wires the Responses API, so the
+ * clone carries `api: "openai-completions"` + the endpoint and stream calls
+ * for it delegate to the completions implementation. The clone also pins
+ * `supportsDeveloperRole: false`: it inherits the donor's `reasoning: true`,
+ * which would otherwise make pi-ai send system instructions as `developer`
+ * messages that strict OpenAI-compatible servers reject (`system` works
+ * everywhere). Everything else (catalog models, classifiers, filters)
+ * delegates to the base provider.
  */
 export function withEndpointModels(
   base: Provider,
   endpoint: string | undefined,
   selectedId: string
 ): Provider {
+  if (endpoint === undefined) {
+    return base;
+  }
+  const known = base.getModels();
+  if (selectedId === "" || known.some((model) => model.id === selectedId)) {
+    return base;
+  }
+  const donor = known.find((model) => model.id === DONOR_MODEL_ID) ?? known[0];
+  if (donor === undefined) {
+    return base;
+  }
+  const clone: Model<Api> = {
+    ...donor,
+    id: selectedId,
+    name: selectedId,
+    api: COMPLETIONS_API,
+    baseUrl: endpoint,
+    compat: { ...donor.compat, supportsDeveloperRole: false },
+  };
+  const completions = openAICompletionsApi();
   return {
     ...base,
-    ...(endpoint === undefined ? {} : { baseUrl: endpoint }),
-    getModels: () => {
-      const known = base.getModels();
-      if (
-        endpoint !== undefined &&
-        selectedId !== "" &&
-        !known.some((model) => model.id === selectedId)
-      ) {
-        const donor = known.find((model) => model.id === DONOR_MODEL_ID) ?? known[0];
-        if (donor !== undefined) {
-          return [...known, { ...donor, id: selectedId, name: selectedId }];
-        }
-      }
-      return known;
-    },
+    baseUrl: endpoint,
+    getModels: () => [...known, clone],
+    getAllModels: () => [...(base.getAllModels?.() ?? known), clone],
+    stream: (model: Model<Api>, context: TranscriptContext, options?: ApiStreamOptions<Api>) =>
+      model.api === COMPLETIONS_API
+        ? completions.stream(model, context, options)
+        : base.stream(model, context, options),
+    streamSimple: (model: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) =>
+      model.api === COMPLETIONS_API
+        ? completions.streamSimple(model, context, options)
+        : base.streamSimple(model, context, options),
   };
 }
