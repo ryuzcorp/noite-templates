@@ -63,12 +63,18 @@ describe("withEndpointModels", () => {
   });
 
   test("a custom endpoint routes completion requests to it", async () => {
-    const seen: Array<{ method: string; path: string; auth: string | null }> = [];
+    const seen: Array<{ method: string; path: string; auth: string | null; body: unknown }> = [];
     const server = Bun.serve({
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
-        seen.push({ method: req.method, path: url.pathname, auth: req.headers.get("authorization") });
+        const body = req.method === "POST" ? await req.json().catch(() => undefined) : undefined;
+        seen.push({
+          method: req.method,
+          path: url.pathname,
+          auth: req.headers.get("authorization"),
+          body,
+        });
         if (req.method === "POST" && url.pathname.endsWith("/chat/completions")) {
           const enc = new TextEncoder();
           const stream = new ReadableStream({
@@ -110,10 +116,17 @@ describe("withEndpointModels", () => {
       expect(model).toBeDefined();
       const answer = await models.complete(model!, {
         messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+        systemPrompt: "be brief",
       });
       expect(seen.map((r) => `${r.method} ${r.path}`)).toEqual(["POST /api/v1/chat/completions"]);
       expect(seen[0]?.auth).toBe("Bearer stub-key");
       expect(JSON.stringify(answer)).toContain("probe-ok");
+      // The system instruction goes out as `system`, never `developer`: the
+      // clone inherits the donor's reasoning flag, and strict servers reject
+      // the developer role.
+      const sent = seen[0]?.body as { messages?: Array<{ role?: unknown }> };
+      expect(sent.messages?.map((m) => m.role)).toContain("system");
+      expect(sent.messages?.map((m) => m.role)).not.toContain("developer");
     } finally {
       server.stop();
     }

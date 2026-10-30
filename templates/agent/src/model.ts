@@ -47,8 +47,12 @@ const COMPLETIONS_API = "openai-completions" as const;
  * `model.baseUrl` the host): a provider-level `baseUrl` spread is silently
  * ignored and the stock openai provider only wires the Responses API, so the
  * clone carries `api: "openai-completions"` + the endpoint and stream calls
- * for it delegate to the completions implementation. Everything else
- * (catalog models, classifiers, filters) delegates to the base provider.
+ * for it delegate to the completions implementation. The clone also pins
+ * `supportsDeveloperRole: false`: it inherits the donor's `reasoning: true`,
+ * which would otherwise make pi-ai send system instructions as `developer`
+ * messages that strict OpenAI-compatible servers reject (`system` works
+ * everywhere). Everything else (catalog models, classifiers, filters)
+ * delegates to the base provider.
  */
 export function withEndpointModels(
   base: Provider,
@@ -72,6 +76,7 @@ export function withEndpointModels(
     name: selectedId,
     api: COMPLETIONS_API,
     baseUrl: endpoint,
+    compat: { ...donor.compat, supportsDeveloperRole: false },
   };
   const completions = openAICompletionsApi();
   return {
