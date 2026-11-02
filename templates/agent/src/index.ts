@@ -158,7 +158,7 @@ function stopPolling() {
   $("pollNote").textContent = "";
 }
 async function refreshState() {
-  await show(fetchJson("/sandboxes/" + name()), "stateOut");
+  await show(fetchJson("/sandboxes/" + name(), { headers: headers() }), "stateOut");
   try { return JSON.parse($("stateOut").textContent); }
   catch (e) { return null; }
 }
@@ -197,7 +197,7 @@ $("send").onclick = async () => {
 $("refresh").onclick = async () => { stopPolling(); await refreshState(); };
 $("diff").onclick = async () => {
   stopPolling();
-  await show(fetchJson("/sandboxes/" + name() + "/diff"), "stateOut");
+  await show(fetchJson("/sandboxes/" + name() + "/diff", { headers: headers() }), "stateOut");
 };
 </script>
 </body>

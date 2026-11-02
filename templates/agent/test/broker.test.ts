@@ -128,7 +128,7 @@ describe("broker provider", () => {
     );
     // Models resolves auth on a microtask before reaching the provider.
     for (let i = 0; i < 10 && broker.pendingRequests().length === 0; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
     }
     const [request] = broker.pendingRequests();
     expect(request?.id).toBe("mr-1");

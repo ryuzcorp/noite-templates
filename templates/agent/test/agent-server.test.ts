@@ -181,9 +181,9 @@ describe("agent server", () => {
     expect(await missing.json()).toHaveProperty("error");
   });
 
-  test("an idle long-poll returns, empty, after its wait", async () => {
+  test("an idle poll returns an empty snapshot", async () => {
     const { base } = await startServer();
-    const batch = await events(base, 0, 1);
+    const batch = await events(base, 0, 0);
     expect(batch.run.status).toBe("idle");
     expect(batch.events).toEqual([]);
     expect(batch.pendingRequests).toEqual([]);

@@ -41,6 +41,16 @@ import { describeContainerError } from "./errors";
 import { agentRuntime, OPENAI_PROVIDER, parseModelRef, withEndpointModels, type ModelSelection } from "./model";
 import { REPO_DIR, resolveRepoPath, shellQuote } from "./paths";
 import {
+  ensureCheckout,
+  GIT_TIMEOUT,
+  runCloneAndStore,
+  type CloneDeps,
+  type RepositoryRecord,
+  type RepositoryStatus,
+  type RepoStore,
+} from "./repo-clone";
+export type { RepositoryRecord, RepositoryStatus } from "./repo-clone";
+import {
   AGENT_SERVER_PATH,
   AGENT_SERVER_PORT,
   AGENT_SERVER_PROCESS_ID,
@@ -49,7 +59,7 @@ import {
   type ModelAnswer,
   type ModelRequestPayload,
 } from "./protocol";
-import { classifyRef, parseRepoHosts, validateRepositoryUrl, validRef } from "./repo-url";
+import { parseRepoHosts, validateRepositoryUrl, validRef } from "./repo-url";
 import { fauxTurn, renderMessages, truncateText } from "./transcript";
 
 /**
@@ -84,8 +94,6 @@ const MIRROR_CAP = 131_072;
 const EXEC_TIMEOUT_DEFAULT = 60_000;
 const EXEC_TIMEOUT_MAX = 300_000;
 const EXEC_OUTPUT_CAP = 8000;
-const GIT_TIMEOUT = 60_000;
-const CLONE_TIMEOUT = 120_000;
 /** How long one harnessWake invocation drives the run before re-arming. */
 const WAKE_DRIVE_MS = 20_000;
 
@@ -93,16 +101,6 @@ export const MODEL_SETUP_MESSAGE =
   "No model is configured. Set OPENAI_API_KEY and MODEL in Noite Settings -> Environment and redeploy " +
   "(OPENAI_BASE_URL selects any OpenAI-compatible endpoint, default api.openai.com); " +
   "MODEL=faux runs a cred-less test loop.";
-
-export type RepositoryStatus = "cloning" | "ready" | "failed";
-
-export interface RepositoryRecord {
-  url: string;
-  ref?: string;
-  commit?: string;
-  status: RepositoryStatus;
-  error?: string;
-}
 
 export type WorkerTaskStatus = "running" | "done" | "failed";
 
@@ -193,14 +191,24 @@ export class AgentSandbox extends Sandbox<Env> {
    */
   #ensureInit(): Promise<void> {
     if (this.#ready === null) {
-      this.#ready = this.#ctx.blockConcurrencyWhile(async () => {
+      // The callback must not throw: an exception inside
+      // blockConcurrencyWhile resets the Durable Object instead of reaching
+      // the designed degraded state, so the failure is captured here and
+      // rethrown only after the callback has completed.
+      const attempt = this.#ctx.blockConcurrencyWhile(async (): Promise<unknown> => {
         this.#initError = null;
         try {
           await this.#init();
+          return undefined;
         } catch (error) {
           this.#initError = error instanceof Error ? error.message : String(error);
+          return error ?? new Error("harness failed to open");
+        }
+      });
+      this.#ready = attempt.then((failure) => {
+        if (failure !== undefined) {
           this.#ready = null;
-          throw error;
+          throw failure;
         }
       });
     }
@@ -244,6 +252,13 @@ export class AgentSandbox extends Sandbox<Env> {
       if (existing?.status === "cloning") {
         return { ok: false, code: "repo_busy", message: "a repository clone is already in progress" };
       }
+      // Inverse of the task-start checks: re-cloning under a running agent
+      // would wipe or replace the tree it works on.
+      const ctask = await this.#ctx.storage.get<ContainerTaskRecord>(CTASK_KEY);
+      const wtask = await this.#ctx.storage.get<WorkerTaskRecord>(TASK_KEY);
+      if (ctask?.status === "starting" || ctask?.status === "running" || wtask?.status === "running") {
+        return { ok: false, code: "task_busy", message: "a task is running; wait for it to finish" };
+      }
       const record: RepositoryRecord = {
         url: valid.normalized,
         ...(ref === undefined ? {} : { ref }),
@@ -263,6 +278,23 @@ export class AgentSandbox extends Sandbox<Env> {
     });
   }
 
+  /** The container surface the clone module needs, bound to this DO. */
+  #cloneDeps(): CloneDeps {
+    return {
+      exec: (command, options) => this.exec(command, options),
+      exists: (path) => this.exists(path),
+      checkout: (url, options) => this.gitCheckout(url, options),
+    };
+  }
+
+  /** The repository record in DO storage, as the clone module sees it. */
+  #repoStore(): RepoStore {
+    return {
+      loadRepo: async () => (await this.#ctx.storage.get<RepositoryRecord>(REPO_KEY)) ?? null,
+      saveRepo: (record) => this.#ctx.storage.put(REPO_KEY, record),
+    };
+  }
+
   /** Scheduled callback: perform the recorded clone/refresh. Idempotent:
    * it only acts while the record still says `cloning`. */
   async repositoryPump(): Promise<void> {
@@ -271,22 +303,7 @@ export class AgentSandbox extends Sandbox<Env> {
       if (record?.status !== "cloning") {
         return;
       }
-      const result = await this.#doClone(record.url, record.ref);
-      if ("error" in result) {
-        await this.#ctx.storage.put<RepositoryRecord>(REPO_KEY, {
-          url: record.url,
-          ...(record.ref === undefined ? {} : { ref: record.ref }),
-          status: "failed",
-          error: result.error,
-        });
-      } else {
-        await this.#ctx.storage.put<RepositoryRecord>(REPO_KEY, {
-          url: record.url,
-          ...(record.ref === undefined ? {} : { ref: record.ref }),
-          ...(result.commit === undefined ? {} : { commit: result.commit }),
-          status: "ready",
-        });
-      }
+      await runCloneAndStore(this.#repoStore(), this.#cloneDeps(), record.url, record.ref);
     } catch (error) {
       // Unexpected (a bug): never leave the record stuck on `cloning`.
       const record = await this.#ctx.storage.get<RepositoryRecord>(REPO_KEY).catch(() => null);
@@ -296,90 +313,6 @@ export class AgentSandbox extends Sandbox<Env> {
           .put<RepositoryRecord>(REPO_KEY, { ...record, status: "failed", error: message })
           .catch(() => undefined);
       }
-    }
-  }
-
-  async #doClone(url: string, ref?: string): Promise<{ commit?: string } | { error: string }> {
-    const classification = ref === undefined ? undefined : classifyRef(ref);
-    if (ref !== undefined && (classification === undefined || classification.kind === "invalid")) {
-      return { error: "invalid ref" };
-    }
-    try {
-      const marker = await this.exists(`${REPO_DIR}/.git`);
-      // Ground truth wins over storage: a checkout whose origin differs
-      // from the requested URL is wiped and re-cloned.
-      let fresh = !marker.exists;
-      if (!fresh) {
-        const origin = await this.exec("git config --get remote.origin.url", {
-          cwd: REPO_DIR,
-          timeout: GIT_TIMEOUT,
-        });
-        if (!origin.success || origin.stdout.trim() !== url) {
-          fresh = true;
-        }
-      }
-      if (fresh) {
-        if (marker.exists) {
-          const wiped = await this.exec(`rm -rf ${shellQuote(REPO_DIR)}`, { timeout: GIT_TIMEOUT });
-          if (!wiped.success) {
-            return { error: `could not clear the old checkout: ${truncateText(wiped.stderr || wiped.stdout)}` };
-          }
-        }
-        const checkout = await this.gitCheckout(url, {
-          targetDir: REPO_DIR,
-          depth: 1,
-          cloneTimeoutMs: CLONE_TIMEOUT,
-          // SHAs are fetched explicitly below; only branches/tags go here.
-          ...(classification?.kind === "branch" ? { branch: classification.ref } : {}),
-        });
-        if (!checkout.success) {
-          return { error: `clone failed (exit ${checkout.exitCode ?? "?"})` };
-        }
-      }
-      if (classification?.kind === "sha") {
-        const fetched = await this.exec(`git fetch --depth 1 origin ${classification.sha}`, {
-          cwd: REPO_DIR,
-          timeout: GIT_TIMEOUT,
-        });
-        if (!fetched.success) {
-          return {
-            error:
-              `could not fetch SHA ${classification.sha.slice(0, 12)} ` +
-              `(the server must allow fetching arbitrary SHAs): ${truncateText(fetched.stderr || fetched.stdout)}`,
-          };
-        }
-        const checked = await this.exec(`git checkout --detach ${classification.sha}`, {
-          cwd: REPO_DIR,
-          timeout: GIT_TIMEOUT,
-        });
-        if (!checked.success) {
-          return { error: truncateText(checked.stderr || checked.stdout) };
-        }
-      } else if (classification?.kind === "branch" && !fresh) {
-        const fetched = await this.exec(`git fetch --depth 1 origin ${classification.ref}`, {
-          cwd: REPO_DIR,
-          timeout: GIT_TIMEOUT,
-        });
-        if (!fetched.success) {
-          return { error: truncateText(fetched.stderr || fetched.stdout) };
-        }
-        const checked = await this.exec(`git checkout ${classification.ref}`, {
-          cwd: REPO_DIR,
-          timeout: GIT_TIMEOUT,
-        });
-        if (!checked.success) {
-          return { error: truncateText(checked.stderr || checked.stdout) };
-        }
-      }
-      const head = await this.exec("git rev-parse HEAD", { cwd: REPO_DIR, timeout: GIT_TIMEOUT });
-      const commit = head.success ? head.stdout.trim() || undefined : undefined;
-      if (commit === undefined) {
-        return {};
-      }
-      return { commit };
-    } catch (error) {
-      const described = describeContainerError(error);
-      return { error: `${described.code}: ${described.message}` };
     }
   }
 
@@ -410,6 +343,12 @@ export class AgentSandbox extends Sandbox<Env> {
     const repository = await this.#ctx.storage.get<RepositoryRecord>(REPO_KEY);
     if (repository?.status === "cloning") {
       return { ok: false, code: "repo_busy", message: "repository clone in progress; wait for it to finish" };
+    }
+    // The container is ephemeral: a restart wipes the checkout while the
+    // record still says `ready`. Restore it before the run sees the tree.
+    const ensured = await ensureCheckout(this.#repoStore(), this.#cloneDeps(), this.#env.REPO_HOSTS);
+    if (!ensured.ok) {
+      return { ok: false, code: "submit_failed", message: ensured.message };
     }
     const resolved = await this.#resolveConversation(ready.ready);
     if (!resolved.ok) {
@@ -460,8 +399,20 @@ export class AgentSandbox extends Sandbox<Env> {
     if (!checked.ok) {
       return { ok: false, code: checked.code, message: checked.message };
     }
+    // Ephemeral-container recovery (see #startWorkerTask). Outside the
+    // block: a restore clones, and slow work must not gate other RPCs.
+    const ensured = await ensureCheckout(this.#repoStore(), this.#cloneDeps(), this.#env.REPO_HOSTS);
+    if (!ensured.ok) {
+      return { ok: false, code: "submit_failed", message: ensured.message };
+    }
     // Serialized: two concurrent starters must not both pass the busy check.
     return this.#ctx.blockConcurrencyWhile(async (): Promise<StartResult> => {
+      // Re-check inside: a clone may have started after the fast-path check
+      // above (or while the restore ran).
+      const repository = await this.#ctx.storage.get<RepositoryRecord>(REPO_KEY);
+      if (repository?.status === "cloning") {
+        return { ok: false, code: "repo_busy", message: "repository clone in progress; wait for it to finish" };
+      }
       const existing = await this.#ctx.storage.get<ContainerTaskRecord>(CTASK_KEY);
       if (existing?.status === "starting" || existing?.status === "running") {
         return { ok: false, code: "task_busy", message: "a task is already running; wait for it to finish" };
@@ -731,6 +682,12 @@ export class AgentSandbox extends Sandbox<Env> {
     }
     if (repository.status === "failed") {
       return { ok: false, code: "git_failed", message: repository.error ?? "last clone failed" };
+    }
+    // Ephemeral-container recovery, as before a task: diffing a vanished
+    // checkout reports the fresh tree, not a stale failure.
+    const ensured = await ensureCheckout(this.#repoStore(), this.#cloneDeps(), this.#env.REPO_HOSTS);
+    if (!ensured.ok) {
+      return { ok: false, code: "git_failed", message: ensured.message };
     }
     try {
       const status = await this.exec("git status --short", { cwd: REPO_DIR, timeout: GIT_TIMEOUT });
