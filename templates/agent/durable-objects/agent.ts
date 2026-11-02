@@ -14,14 +14,12 @@ import {
   type FauxProviderHandle,
 } from "@earendil-works/pi-ai/providers/faux";
 import {
-  ConversationBusy,
   Harness,
   createRegistry,
   defineExtension,
   section,
   type Conversation,
   type EntryId,
-  type SubmissionId,
 } from "@earendil-works/pi-durable";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { defineDurableState, type DurableStateContext } from "void/durable";
@@ -29,13 +27,12 @@ import { defineDurableState, type DurableStateContext } from "void/durable";
 import { createCloneDeps, type CloneSandbox } from "../src/clone-deps";
 import { createContainerAdapter, type ContainerClient } from "../src/container-adapter";
 import { pumpAgentOnce, type ContainerTaskRecord, type ModelAnswerOutcome } from "../src/container-pump";
+import { readDiff, type DiffResult } from "../src/diff-read";
 import type { Env } from "../src/env";
-import { describeContainerError } from "../src/errors";
 import { agentRuntime, OPENAI_PROVIDER, parseModelRef, withEndpointModels, type ModelSelection } from "../src/model";
 import { REPO_DIR } from "../src/paths";
 import {
   ensureCheckout,
-  GIT_TIMEOUT,
   runCloneAndStore,
   type RepositoryRecord,
   type RepositoryStatus,
@@ -45,6 +42,15 @@ export type { RepositoryRecord, RepositoryStatus } from "../src/repo-clone";
 import type { ModelRequestPayload } from "../src/protocol";
 import { parseRepoHosts, validateRepositoryUrl, validRef } from "../src/repo-url";
 import { createAgentServerClient, type AgentServerSandbox } from "../src/server-client";
+import {
+  admitContainerTask,
+  admitWorkerTask,
+  drivePendingWorkerTask,
+  type StartResult,
+  type WorkerTaskRecord,
+} from "../src/task-queue";
+export type { StartErrorCode, StartResult, WorkerTaskRecord, WorkerTaskStatus } from "../src/task-queue";
+export type { DiffResult } from "../src/diff-read";
 import { createWorkerTools, type WorkerToolsSandbox } from "../src/tools";
 import { fauxTurn, renderMessages, truncateText } from "../src/transcript";
 import { Container, type AgentContainer } from "./container";
@@ -78,6 +84,8 @@ const REPO_KEY = "agent:repo";
 const TASK_KEY = "agent:task";
 const CTASK_KEY = "agent:ctask";
 const MIRROR_KEY = "agent:cmirror";
+/** Diff-triggered checkout restore, performed by the alarm (see `readDiff`). */
+const RESTORE_KEY = "agent:restore";
 const TRANSCRIPT_TAIL = 50;
 const TRANSCRIPT_CAP = 32_768;
 const MIRROR_CAP = 131_072;
@@ -92,32 +100,10 @@ export const MODEL_SETUP_MESSAGE =
   "(OPENAI_BASE_URL selects any OpenAI-compatible endpoint, default api.openai.com); " +
   "MODEL=faux runs a cred-less test loop.";
 
-export type WorkerTaskStatus = "running" | "done" | "failed";
-
-export interface WorkerTaskRecord {
-  status: WorkerTaskStatus;
-  submissionId?: SubmissionId;
-  error?: string;
-  updatedAt: number;
-}
-
 interface MirrorRecord {
   text: string;
   truncated: boolean;
 }
-
-export type StartErrorCode =
-  | "invalid_repository"
-  | "invalid_ref"
-  | "invalid_task"
-  | "repo_busy"
-  | "task_busy"
-  | "model_not_configured"
-  | "unknown_model"
-  | "submit_failed"
-  | "init_failed";
-
-export type StartResult = { ok: true } | { ok: false; code: StartErrorCode; message: string };
 
 export type TaskStatus = "idle" | "running" | "done" | "failed";
 
@@ -139,10 +125,6 @@ export interface SandboxState {
   /** Set when the container transcript mirror dropped earlier entries. */
   mirrorTruncated?: boolean;
 }
-
-export type DiffResult =
-  | { ok: true; commit?: string; status: string; stat: string; diff: string }
-  | { ok: false; code: "no_repository" | "repo_busy" | "git_failed"; message: string };
 
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = (value ?? "").trim();
@@ -214,6 +196,7 @@ function sandboxClient(context: Ctx): WorkerToolsSandbox & CloneSandbox & AgentS
         ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         ...(options?.stdinText === undefined ? {} : { stdinText: options.stdinText }),
+        ...(options?.startGraceMs === undefined ? {} : { startGraceMs: options.startGraceMs }),
       });
       return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
     },
@@ -469,7 +452,12 @@ async function startRepository(context: Ctx, name: string, url: string, ref?: st
   // would wipe or replace the tree it works on.
   const ctask = await context.storage.get<ContainerTaskRecord>(CTASK_KEY);
   const wtask = await context.storage.get<WorkerTaskRecord>(TASK_KEY);
-  if (ctask?.status === "starting" || ctask?.status === "running" || wtask?.status === "running") {
+  if (
+    ctask?.status === "starting" ||
+    ctask?.status === "running" ||
+    wtask?.status === "pending" ||
+    wtask?.status === "running"
+  ) {
     return { ok: false, code: "task_busy", message: "a task is running; wait for it to finish" };
   }
   const record: RepositoryRecord = {
@@ -518,11 +506,10 @@ async function repositoryPump(context: Ctx): Promise<void> {
 // ------------------------------------------------------------------
 
 /**
- * Durably admit one task and return at once; background work (the harness
- * in worker mode, the pump chain in container mode) performs it. Concurrent
- * submissions are refused with `task_busy` (pi-durable `whenBusy: "reject"`
- * in worker mode, a record check in container mode): one run at a time per
- * sandbox.
+ * Durably admit one task and return at once; the alarm performs the slow
+ * work (checkout restore, then the harness submit in worker mode or the
+ * pump submit in container mode). Cheap checks only here (text, clone
+ * busy, model, task busy): one run at a time per sandbox, 202 at once.
  */
 async function startTask(context: Ctx, name: string, text: string): Promise<StartResult> {
   context.state.name = name;
@@ -540,109 +527,70 @@ async function startWorkerTask(context: Ctx, text: string): Promise<StartResult>
   if (!ready.ok) {
     return { ok: false, code: "init_failed", message: ready.message };
   }
-  const repository = await context.storage.get<RepositoryRecord>(REPO_KEY);
-  if (repository?.status === "cloning") {
-    return { ok: false, code: "repo_busy", message: "repository clone in progress; wait for it to finish" };
-  }
-  // The container is ephemeral: a restart wipes the checkout while the
-  // record still says `ready`. Restore it before the run sees the tree.
-  const ensured = await ensureCheckout(
-    repoStore(context),
-    createCloneDeps(sandboxClient(context)),
-    context.env.REPO_HOSTS
+  // Fast admission only: the alarm restores the checkout and submits (see
+  // `drivePendingWorkerTask` in `harnessWake`). The slow deps below are
+  // unused here — they exist so the shared shape proves the POST never
+  // touches the container.
+  return admitWorkerTask(
+    {
+      loadRepo: async () => (await context.storage.get<RepositoryRecord>(REPO_KEY)) ?? null,
+      loadTask: async () => (await context.storage.get<WorkerTaskRecord>(TASK_KEY)) ?? null,
+      saveTask: (task) => context.storage.put(TASK_KEY, task),
+      setAlarm: async () => {
+        await context.setAlarm(Date.now());
+      },
+      now: () => Date.now(),
+      checkModel: () => {
+        const checked = checkModel(context, ready.ready);
+        return checked.ok ? { ok: true as const } : checked;
+      },
+      ensureCheckout: () =>
+        ensureCheckout(repoStore(context), createCloneDeps(sandboxClient(context)), context.env.REPO_HOSTS),
+      submit: async (pending) => {
+        const resolved = await resolveConversation(context, ready.ready);
+        if (!resolved.ok) {
+          throw new Error(resolved.message);
+        }
+        const submission = await resolved.root.submit(
+          { type: "input", content: pending, whenBusy: "reject" },
+          BACKGROUND_CONTEXT
+        );
+        return submission.id;
+      },
+    },
+    text
   );
-  if (!ensured.ok) {
-    return { ok: false, code: "submit_failed", message: ensured.message };
-  }
-  const resolved = await resolveConversation(context, ready.ready);
-  if (!resolved.ok) {
-    return { ok: false, code: resolved.code, message: resolved.message };
-  }
-  try {
-    const submission = await resolved.root.submit(
-      { type: "input", content: text, whenBusy: "reject" },
-      BACKGROUND_CONTEXT
-    );
-    try {
-      await context.storage.put<WorkerTaskRecord>(TASK_KEY, {
-        status: "running",
-        submissionId: submission.id,
-        updatedAt: Date.now(),
-      });
-      // The run starts in this invocation, but the response goes out now;
-      // the alarm keeps it progressing after the response (and revives it
-      // after an eviction).
-      await context.setAlarm(Date.now());
-    } catch (inner) {
-      // Leave no untracked run behind (best-effort: storage is failing).
-      await ready.ready.harness.abortSubmission(submission.id, BACKGROUND_CONTEXT).catch(() => undefined);
-      throw inner;
-    }
-    return { ok: true };
-  } catch (error) {
-    if (error instanceof ConversationBusy) {
-      return { ok: false, code: "task_busy", message: "a task is already running; wait for it to finish" };
-    }
-    const described = describeContainerError(error);
-    return { ok: false, code: "submit_failed", message: described.message };
-  }
 }
 
 async function startContainerTask(context: Ctx, text: string): Promise<StartResult> {
-  const repository = await context.storage.get<RepositoryRecord>(REPO_KEY);
-  if (repository?.status === "cloning") {
-    return { ok: false, code: "repo_busy", message: "repository clone in progress; wait for it to finish" };
-  }
   // Fail fast on a broken harness or missing model: the pump would only
   // fail the task with the same message after a 202.
   const ready = await ensureReady(context);
   if (!ready.ok) {
     return { ok: false, code: "init_failed", message: ready.message };
   }
-  const checked = checkModel(context, ready.ready);
-  if (!checked.ok) {
-    return { ok: false, code: checked.code, message: checked.message };
-  }
-  // Ephemeral-container recovery (see startWorkerTask). Slow work runs here
-  // because the busy check below must observe the restored record.
-  const ensured = await ensureCheckout(
-    repoStore(context),
-    createCloneDeps(sandboxClient(context)),
-    context.env.REPO_HOSTS
+  // Fast admission only: the pump restores the checkout via
+  // `prepareCheckout` before it submits. No slow work here, so no
+  // re-check after the checks — serialization covers it.
+  return admitContainerTask(
+    {
+      loadRepo: async () => (await context.storage.get<RepositoryRecord>(REPO_KEY)) ?? null,
+      loadTask: async () => (await context.storage.get<ContainerTaskRecord>(CTASK_KEY)) ?? null,
+      saveTask: (task) => context.storage.put(CTASK_KEY, task),
+      clearMirror: () => context.storage.put<MirrorRecord>(MIRROR_KEY, { text: "", truncated: false }),
+      setAlarm: async () => {
+        await context.setAlarm(Date.now());
+      },
+      now: () => Date.now(),
+      checkModel: () => {
+        const checked = checkModel(context, ready.ready);
+        return checked.ok ? { ok: true as const } : checked;
+      },
+      ensureCheckout: () =>
+        ensureCheckout(repoStore(context), createCloneDeps(sandboxClient(context)), context.env.REPO_HOSTS),
+    },
+    text
   );
-  if (!ensured.ok) {
-    return { ok: false, code: "submit_failed", message: ensured.message };
-  }
-  // Re-check: serialized by the method queue, but the restore above awaited
-  // slow work while queued behind nothing else — a clone admitted earlier
-  // in the queue may have landed since the fast-path check.
-  const current = await context.storage.get<RepositoryRecord>(REPO_KEY);
-  if (current?.status === "cloning") {
-    return { ok: false, code: "repo_busy", message: "repository clone in progress; wait for it to finish" };
-  }
-  const existing = await context.storage.get<ContainerTaskRecord>(CTASK_KEY);
-  if (existing?.status === "starting" || existing?.status === "running") {
-    return { ok: false, code: "task_busy", message: "a task is already running; wait for it to finish" };
-  }
-  const record: ContainerTaskRecord = {
-    status: "starting",
-    text,
-    cursor: 0,
-    failures: 0,
-    updatedAt: Date.now(),
-  };
-  try {
-    await context.storage.put<ContainerTaskRecord>(CTASK_KEY, record);
-    await context.storage.put<MirrorRecord>(MIRROR_KEY, { text: "", truncated: false });
-    await context.setAlarm(Date.now());
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await context.storage
-      .put<ContainerTaskRecord>(CTASK_KEY, { ...record, status: "failed", text: undefined, error: message })
-      .catch(() => undefined);
-    return { ok: false, code: "submit_failed", message };
-  }
-  return { ok: true };
 }
 
 /**
@@ -656,6 +604,35 @@ async function startContainerTask(context: Ctx, text: string): Promise<StartResu
 async function harnessWake(context: Ctx): Promise<void> {
   const entry = entryFor(context.storage);
   try {
+    // Pending task first: the alarm restores the checkout and submits (the
+    // POST never waits on slow work). A failed restore fails the task.
+    await drivePendingWorkerTask({
+      loadRepo: async () => (await context.storage.get<RepositoryRecord>(REPO_KEY)) ?? null,
+      loadTask: async () => (await context.storage.get<WorkerTaskRecord>(TASK_KEY)) ?? null,
+      saveTask: (task) => context.storage.put(TASK_KEY, task),
+      setAlarm: async () => {
+        await context.setAlarm(Date.now());
+      },
+      now: () => Date.now(),
+      checkModel: () => ({ ok: true as const }),
+      ensureCheckout: () =>
+        ensureCheckout(repoStore(context), createCloneDeps(sandboxClient(context)), context.env.REPO_HOSTS),
+      submit: async (text) => {
+        const submitted = await ensureReady(context);
+        if (!submitted.ok) {
+          throw new Error(submitted.message);
+        }
+        const resolved = await resolveConversation(context, submitted.ready);
+        if (!resolved.ok) {
+          throw new Error(resolved.message);
+        }
+        const submission = await resolved.root.submit(
+          { type: "input", content: text, whenBusy: "reject" },
+          BACKGROUND_CONTEXT
+        );
+        return submission.id;
+      },
+    });
     const ready = await ensureReady(context);
     if (!ready.ok) {
       return;
@@ -687,7 +664,8 @@ async function harnessWake(context: Ctx): Promise<void> {
       // which waitForIdle does not cover): poll slowly instead of
       // tight-looping alarms. A new submit always arms its own alarm.
       const tracked = await context.storage.get<WorkerTaskRecord>(TASK_KEY);
-      await context.setAlarm(Date.now() + (tracked?.status === "running" ? 0 : 10_000));
+      const immediate = tracked?.status === "pending" || tracked?.status === "running";
+      await context.setAlarm(Date.now() + (immediate ? 0 : 10_000));
     } else if (wake.at !== undefined) {
       await context.setAlarm(wake.at);
     }
@@ -757,6 +735,8 @@ async function agentPump(context: Ctx): Promise<void> {
       },
       model: { answer: (request) => answerBrokerRequest(context, request) },
       pollSeconds: DO_PUMP_POLL_SECONDS,
+      prepareCheckout: () =>
+        ensureCheckout(repoStore(context), createCloneDeps(sandboxClient(context)), context.env.REPO_HOSTS),
     });
     if (outcome.action === "continue") {
       await context.setAlarm(Date.now());
@@ -791,9 +771,26 @@ async function agentPump(context: Ctx): Promise<void> {
 }
 
 /**
+ * Diff-triggered restore, performed here (slow work allowed). Clears the
+ * request either way: a failed restore surfaces on the next GET
+ * (`git_failed` when the record failed, `restoring` again when the probe
+ * stayed transport-broken and the next GET re-schedules).
+ */
+async function restorePump(context: Ctx): Promise<void> {
+  try {
+    await ensureCheckout(repoStore(context), createCloneDeps(sandboxClient(context)), context.env.REPO_HOSTS);
+  } catch {
+    // Unexpected (a bug): the flag still clears below so the alarm never
+    // sticks on restore — the next GET re-schedules if still missing.
+  } finally {
+    await context.storage.delete(RESTORE_KEY).catch(() => undefined);
+  }
+}
+
+/**
  * The single alarm hook: clone pump first (nothing else can be pending
- * while a clone runs), then the runtime's pump. Every branch is idempotent
- * and re-arms while its work remains.
+ * while a clone runs), then a diff-triggered restore, then the runtime's
+ * pump. Every branch is idempotent and re-arms while its work remains.
  */
 async function alarm(context: Ctx): Promise<void> {
   if (context.state.name === "") {
@@ -803,6 +800,10 @@ async function alarm(context: Ctx): Promise<void> {
   if (repo?.status === "cloning") {
     await repositoryPump(context);
     return;
+  }
+  const restore = await context.storage.get<boolean>(RESTORE_KEY);
+  if (restore === true) {
+    await restorePump(context);
   }
   if (agentRuntime(context.env.AGENT_RUNTIME) === "container") {
     await agentPump(context);
@@ -853,15 +854,19 @@ async function getSandboxState(
     const ready = await ensureReady(context);
     if (!ready.ok) {
       // Degraded but useful: repo + tracked task without the transcript.
+      // A pending admission still reads busy so the page polls until the
+      // alarm settles it.
+      const degraded: TaskStatus =
+        tracked?.status === "pending" || tracked?.status === "running" ? "running" : (tracked?.status ?? "idle");
       return {
         ok: true,
         state: {
           runtime,
-          busy: false,
+          busy: degraded === "running",
           model: context.env.MODEL ?? "",
           repository,
           task: {
-            status: tracked?.status ?? "idle",
+            status: degraded,
             ...(tracked?.error === undefined ? {} : { error: tracked.error }),
           },
           transcript: "",
@@ -878,9 +883,12 @@ async function getSandboxState(
     const agent = await root.agent(BACKGROUND_CONTEXT).catch(() => undefined);
     const model =
       agent?.model !== undefined ? `${agent.model.provider}/${agent.model.modelId}` : (context.env.MODEL ?? "");
-    // Busy comes from durable harness state, not an instance field: it
-    // survives eviction (open recovery marks active work).
-    const busy = ready.ready.harness.wake().active;
+    // Busy comes from durable state, not an instance field: a pending
+    // admission (not yet submitted) plus durable harness activity both
+    // survive eviction (open recovery marks active work).
+    const status: TaskStatus =
+      synced?.status === "pending" || synced?.status === "running" ? "running" : (synced?.status ?? "idle");
+    const busy = synced?.status === "pending" || ready.ready.harness.wake().active;
     return {
       ok: true,
       state: {
@@ -889,7 +897,7 @@ async function getSandboxState(
         model,
         repository,
         task: {
-          status: synced?.status ?? "idle",
+          status,
           ...(synced?.error === undefined ? {} : { error: synced.error }),
         },
         transcript: transcript.text,
@@ -903,51 +911,22 @@ async function getSandboxState(
 
 /**
  * git status + diff of the sandbox checkout. No model calls, no harness
- * needed. `no_repository` (never cloned) vs `git_failed` (clone failed or
- * git broke) are distinct codes.
+ * needed, and — critically — no inline recovery: when the checkout is
+ * missing (or the container is cold) the GET schedules the restore durably
+ * and answers `restoring` at once; the alarm performs it.
  */
 async function getDiff(context: Ctx, name: string): Promise<DiffResult> {
   context.state.name = name;
-  const repository = await context.storage.get<RepositoryRecord>(REPO_KEY);
-  if (repository === null || repository === undefined) {
-    return { ok: false, code: "no_repository", message: "no repository cloned yet" };
-  }
-  if (repository.status === "cloning") {
-    return { ok: false, code: "repo_busy", message: "repository clone in progress" };
-  }
-  if (repository.status === "failed") {
-    return { ok: false, code: "git_failed", message: repository.error ?? "last clone failed" };
-  }
-  // Ephemeral-container recovery, as before a task: diffing a vanished
-  // checkout reports the fresh tree, not a stale failure.
-  const deps = createCloneDeps(sandboxClient(context));
-  const ensured = await ensureCheckout(repoStore(context), deps, context.env.REPO_HOSTS);
-  if (!ensured.ok) {
-    return { ok: false, code: "git_failed", message: ensured.message };
-  }
-  try {
-    const status = await deps.exec("git status --short", { cwd: REPO_DIR, timeout: GIT_TIMEOUT });
-    const stat = await deps.exec("git diff --stat", { cwd: REPO_DIR, timeout: GIT_TIMEOUT });
-    const diff = await deps.exec("git diff", { cwd: REPO_DIR, timeout: GIT_TIMEOUT });
-    if (!status.success || !stat.success || !diff.success) {
-      const failed = !status.success ? status : !stat.success ? stat : diff;
-      return {
-        ok: false,
-        code: "git_failed",
-        message: truncateText(failed.stderr || failed.stdout || "git command failed"),
-      };
-    }
-    return {
-      ok: true,
-      ...(repository.commit === undefined ? {} : { commit: repository.commit }),
-      status: truncateText(status.stdout),
-      stat: truncateText(stat.stdout),
-      diff: truncateText(diff.stdout, TRANSCRIPT_CAP),
-    };
-  } catch (error) {
-    const described = describeContainerError(error);
-    return { ok: false, code: "git_failed", message: `${described.code}: ${described.message}` };
-  }
+  return readDiff({
+    store: repoStore(context),
+    deps: createCloneDeps(sandboxClient(context)),
+    isRunning: async () => (await containerStub(context).isRunning()).running,
+    scheduleRestore: async () => {
+      await context.storage.put(RESTORE_KEY, true);
+      await context.setAlarm(Date.now());
+    },
+    repoHosts: context.env.REPO_HOSTS,
+  });
 }
 
 // ------------------------------------------------------------------

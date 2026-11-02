@@ -22,7 +22,7 @@ import type { WorkerToolsSandbox } from "./tools";
 export interface ContainerClient {
   run(
     argv: string[],
-    options?: { cwd?: string; timeoutMs?: number; stdinText?: string }
+    options?: { cwd?: string; timeoutMs?: number; stdinText?: string; startGraceMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }>;
   execDetached(argv: string[]): Promise<void>;
   fetch(port: number, request: Request): Promise<Response>;

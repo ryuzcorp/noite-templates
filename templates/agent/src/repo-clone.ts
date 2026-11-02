@@ -43,7 +43,10 @@ export interface CloneCheckoutOptions {
 
 /** Minimal structural view of the Sandbox container API the clone uses. */
 export interface CloneDeps {
-  exec(command: string, options?: { cwd?: string; timeout?: number }): Promise<CloneExecResult>;
+  exec(
+    command: string,
+    options?: { cwd?: string; timeout?: number; startGraceMs?: number }
+  ): Promise<CloneExecResult>;
   exists(path: string): Promise<{ exists: boolean }>;
   checkout(url: string, options: CloneCheckoutOptions): Promise<{ success: boolean; exitCode?: number | null }>;
 }

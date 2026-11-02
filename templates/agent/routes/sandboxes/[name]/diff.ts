@@ -22,6 +22,9 @@ export const GET = defineHandler(async (c) => {
     if (result.ok) {
       return c.json({ commit: result.commit, status: result.status, stat: result.stat, diff: result.diff });
     }
+    if (result.code === "restoring") {
+      return c.json({ status: "restoring", error: result.message, code: result.code }, 409);
+    }
     const status = result.code === "git_failed" ? 502 : 409;
     return c.json({ error: result.message, code: result.code }, status);
   } catch (error) {

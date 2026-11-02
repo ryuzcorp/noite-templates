@@ -9,7 +9,7 @@ function buf(text: string): ArrayBuffer {
 
 interface RunCall {
   argv: string[];
-  options?: { cwd?: string; timeoutMs?: number; stdinText?: string };
+  options?: { cwd?: string; timeoutMs?: number; stdinText?: string; startGraceMs?: number };
 }
 
 class FakeContainer implements ContainerClient {
@@ -24,7 +24,7 @@ class FakeContainer implements ContainerClient {
 
   async run(
     argv: string[],
-    options?: { cwd?: string; timeoutMs?: number; stdinText?: string }
+    options?: { cwd?: string; timeoutMs?: number; stdinText?: string; startGraceMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }> {
     this.runs.push({ argv, options });
     return this.runImpl(argv, options);

@@ -13,6 +13,9 @@ dist
 sandbox/agent/
 
 # local environment: app env vars for `bun run dev` live here, never committed
+.dev.vars
+.dev.vars*
+!.dev.vars.example
 .env
 .env.*
 !.env.example

@@ -208,7 +208,7 @@ response is JSON, including errors.
 | `POST /sandboxes/:name/repository` | `{url, ref?}` | Record a clone/refresh, run it in the background. → `202 {status: "cloning"}`. 400 bad URL/ref/host, 409 while cloning. |
 | `POST /sandboxes/:name/task` | `{text}` or raw text | Admit one task, run it in the background. → `202 {status: "running"}`. 409 while a task runs (one run per sandbox), 503 without a model. |
 | `GET /sandboxes/:name` | — | `{runtime, busy, model, repository, task, transcript}`. Never waits, never starts the container. |
-| `GET /sandboxes/:name/diff` | — | `{commit, status, stat, diff}` from `git` in the container. 409 with no repo, 502 when git fails. |
+| `GET /sandboxes/:name/diff` | — | `{commit, status, stat, diff}` from `git` in the container. 409 `{status: "restoring"}` while a missing checkout restores (retry shortly), 409 with no repo or a clone in progress, 502 when git fails. |
 
 `repository.status` is `idle|cloning|ready|failed`; `task.status` is
 `idle|running|done|failed`, with `error` on failure. Every error response

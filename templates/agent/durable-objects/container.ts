@@ -31,6 +31,12 @@ export interface ContainerExecOptions {
   stdinText?: string;
   /** Kill the process past this deadline. Default EXEC_DEFAULT_TIMEOUT_MS. */
   timeoutMs?: number;
+  /**
+   * Retry budget for the no-such-container start race. Default
+   * START_GRACE_MS; pass 0 for reads that must never wait on a cold
+   * container (GETs answer `restoring` instead and let the alarm start it).
+   */
+  startGraceMs?: number;
 }
 
 export interface ContainerExecResult {
@@ -114,6 +120,7 @@ export class AgentContainer extends DurableObject<Env> {
     const container = this.#container();
     await this.#ensureStarted();
     const timeoutMs = options.timeoutMs ?? EXEC_DEFAULT_TIMEOUT_MS;
+    const graceMs = options.startGraceMs ?? START_GRACE_MS;
     const started = Date.now();
     for (;;) {
       let proc: ExecProcess;
@@ -123,7 +130,7 @@ export class AgentContainer extends DurableObject<Env> {
           ...(options.stdinText === undefined ? {} : { stdin: stdinStream(options.stdinText) }),
         });
       } catch (error) {
-        if (isNoSuchContainer(error) && Date.now() - started < START_GRACE_MS) {
+        if (isNoSuchContainer(error) && Date.now() - started < graceMs) {
           await this.#ensureStarted();
           await sleep(START_RETRY_STEP_MS);
           continue;
@@ -159,19 +166,22 @@ export class AgentContainer extends DurableObject<Env> {
    * agent server). Outputs are ignored so an unread pipe can never stall
    * it. Same start-race retry as `exec`.
    */
-  async execDetached(argv: string[]): Promise<{ started: boolean }> {
+  async execDetached(argv: string[], options: Pick<ContainerExecOptions, "startGraceMs"> = {}): Promise<{
+    started: boolean;
+  }> {
     if (argv.length === 0) {
       throw new Error("execDetached() requires a non-empty command array");
     }
     const container = this.#container();
     await this.#ensureStarted();
+    const graceMs = options.startGraceMs ?? START_GRACE_MS;
     const started = Date.now();
     for (;;) {
       try {
         await container.exec(argv, { stdout: "ignore", stderr: "ignore" });
         return { started: true };
       } catch (error) {
-        if (isNoSuchContainer(error) && Date.now() - started < START_GRACE_MS) {
+        if (isNoSuchContainer(error) && Date.now() - started < graceMs) {
           await this.#ensureStarted();
           await sleep(START_RETRY_STEP_MS);
           continue;
@@ -179,6 +189,15 @@ export class AgentContainer extends DurableObject<Env> {
         throw error;
       }
     }
+  }
+
+  /**
+   * Fast liveness probe for GETs: reports whether the container is running
+   * without starting it and without waiting. The agent object answers
+   * `restoring` when this is false and lets the alarm start the container.
+   */
+  async isRunning(): Promise<{ running: boolean }> {
+    return { running: this.#container().running };
   }
 
   /**

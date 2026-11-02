@@ -9,7 +9,7 @@ function buf(text: string): ArrayBuffer {
 
 interface RunCall {
   argv: string[];
-  options?: { cwd?: string; timeoutMs?: number };
+  options?: { cwd?: string; timeoutMs?: number; startGraceMs?: number };
 }
 
 class FakeSandbox implements CloneSandbox {
@@ -24,7 +24,7 @@ class FakeSandbox implements CloneSandbox {
 
   async run(
     argv: string[],
-    options?: { cwd?: string; timeoutMs?: number }
+    options?: { cwd?: string; timeoutMs?: number; startGraceMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }> {
     this.runs.push({ argv, options });
     return this.runImpl(argv, options);
@@ -83,7 +83,7 @@ describe("createCloneDeps", () => {
     sandbox.statImpl = async () => {
       throw transport;
     };
-    expect(deps.exists(`${REPO_DIR}/.git`)).rejects.toBe(transport);
+    await expect(deps.exists(`${REPO_DIR}/.git`)).rejects.toBe(transport);
   });
 
   test("checkout clones by argv (branch only for branches), with the clone timeout", async () => {

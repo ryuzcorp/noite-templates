@@ -20,7 +20,7 @@ import {
 export interface CloneSandbox {
   run(
     argv: string[],
-    options?: { cwd?: string; timeoutMs?: number }
+    options?: { cwd?: string; timeoutMs?: number; startGraceMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }>;
   files: {
     stat(path: string): Promise<unknown>;
@@ -43,11 +43,15 @@ function isNotFound(error: unknown): boolean {
 /** Build the `CloneDeps` the clone module needs, bound to one sandbox. */
 export function createCloneDeps(sandbox: CloneSandbox): CloneDeps {
   return {
-    exec: async (command: string, options?: { cwd?: string; timeout?: number }): Promise<CloneExecResult> => {
+    exec: async (
+      command: string,
+      options?: { cwd?: string; timeout?: number; startGraceMs?: number }
+    ): Promise<CloneExecResult> => {
       const timeout = options?.timeout ?? GIT_TIMEOUT;
       const result = await sandbox.run(["sh", "-c", command], {
         ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
         timeoutMs: timeout,
+        ...(options?.startGraceMs === undefined ? {} : { startGraceMs: options.startGraceMs }),
       });
       return {
         success: result.exitCode === 0,

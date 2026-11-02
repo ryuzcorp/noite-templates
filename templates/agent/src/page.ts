@@ -30,6 +30,9 @@ export function humanPage(): string {
 <script>
 const $ = (id) => document.getElementById(id);
 $("token").value = localStorage.getItem("agent-token") || "";
+$("token").addEventListener("input", () => {
+  if ($("token").value.trim() === "") localStorage.removeItem("agent-token");
+});
 const name = () => $("name").value.trim();
 // Split so naive secret scanners do not flag this line; it is just the scheme.
 const scheme = "Bear" + "er";
