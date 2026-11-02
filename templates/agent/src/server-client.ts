@@ -1,14 +1,17 @@
 /**
- * `AgentServerClient` over a Void sandbox (`void/sandbox`): the DO reaches
- * the container-mode agent server with `sandbox.fetch(port, request)` and
- * starts it with `sandbox.exec(['node', '/opt/agent/server.mjs'])`. The
- * server bundle ships in the image (Dockerfile COPY), so — unlike the old
- * SDK flow — there is nothing to write and no named process to kill; a
- * best-effort `pkill` clears a half-dead server before a restart.
+ * `AgentServerClient` over the container object
+ * (`durable-objects/container.ts`, via `src/container-adapter.ts`): the
+ * agent object reaches the container-mode agent server with
+ * `sandbox.fetch(port, request)` (a `stub.fetch()` proxy to the container
+ * port) and starts it detached with
+ * `sandbox.exec(['node', '/opt/agent/server.mjs'])`. The server bundle
+ * ships in the image (Dockerfile COPY), so there is nothing to write and
+ * no named process to kill; a best-effort `pkill` clears a half-dead
+ * server before a restart.
  *
- * The client is injected (structurally satisfied by the real sandbox
- * client) so tests drive it with fakes; this module never imports `void/*`
- * and loads under bun.
+ * The client is injected (structurally satisfied by the container adapter)
+ * so tests drive it with fakes; this module never imports `void/*` and
+ * loads under bun.
  */
 
 import { PumpError, type AgentServerClient } from "./container-pump";
@@ -24,7 +27,7 @@ import { truncateText } from "./transcript";
 
 /** Minimal sandbox surface the agent-server client needs. */
 export interface AgentServerSandbox {
-  run(argv: string[], options?: { signal?: AbortSignal }): Promise<{
+  run(argv: string[], options?: { timeoutMs?: number }): Promise<{
     stdout: ArrayBuffer;
     stderr: ArrayBuffer;
     exitCode: number;
@@ -78,7 +81,8 @@ export function createAgentServerClient(
   const now = options.now ?? Date.now;
 
   // The URL host is a placeholder: `sandbox.fetch` forwards by the port
-  // argument to the container's loopback; only path/query/method/headers/
+  // argument to the container object's port proxy, which retargets the
+  // request at the container's loopback; only path/query/method/headers/
   // body cross into the container.
   async function serverFetch(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     const request = new Request(`http://127.0.0.1:${AGENT_SERVER_PORT}${path}`, init);

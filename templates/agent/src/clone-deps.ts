@@ -1,9 +1,12 @@
 /**
- * `CloneDeps` over a Void sandbox (`void/sandbox`). The client is injected
- * (structurally satisfied by the real sandbox client) so tests drive the
- * adapter with fakes; this module never imports `void/*` and loads under
- * bun. Commands run as argv (no shell quoting needed for the git commands
- * themselves); the legacy string-exec seam runs through `sh -c`.
+ * `CloneDeps` over the container object (`durable-objects/container.ts`,
+ * via `src/container-adapter.ts`). The client is injected (structurally
+ * satisfied by the container adapter) so tests drive the adapter with
+ * fakes; this module never imports `void/*` and loads under bun. Commands
+ * run as argv (no shell quoting needed for the git commands themselves);
+ * the legacy string-exec seam runs through `sh -c`. Timeouts cross to the
+ * container as milliseconds (an `AbortSignal` cannot cross the DO↔DO
+ * call).
  */
 
 import {
@@ -17,7 +20,7 @@ import {
 export interface CloneSandbox {
   run(
     argv: string[],
-    options?: { cwd?: string; signal?: AbortSignal }
+    options?: { cwd?: string; timeoutMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }>;
   files: {
     stat(path: string): Promise<unknown>;
@@ -44,7 +47,7 @@ export function createCloneDeps(sandbox: CloneSandbox): CloneDeps {
       const timeout = options?.timeout ?? GIT_TIMEOUT;
       const result = await sandbox.run(["sh", "-c", command], {
         ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
-        signal: AbortSignal.timeout(timeout),
+        timeoutMs: timeout,
       });
       return {
         success: result.exitCode === 0,
@@ -76,7 +79,7 @@ export function createCloneDeps(sandbox: CloneSandbox): CloneDeps {
         argv.push("--branch", options.branch);
       }
       argv.push(url, options.targetDir);
-      const result = await sandbox.run(argv, { signal: AbortSignal.timeout(options.cloneTimeoutMs) });
+      const result = await sandbox.run(argv, { timeoutMs: options.cloneTimeoutMs });
       return { success: result.exitCode === 0, exitCode: result.exitCode };
     },
   };

@@ -3,6 +3,7 @@
 // server restart) and the build emits `dist/ssr/wrangler.json`, which Noite
 // reads natively. There is intentionally no celld-config plugin and no
 // `dist/wrangler.json` of our own.
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "void/config";
 
 function baked(name: string): string | undefined {
@@ -17,10 +18,31 @@ function baked(name: string): string | undefined {
 const OPENAI_API_KEY = baked("OPENAI_API_KEY");
 const AGENT_TOKEN = baked("AGENT_TOKEN");
 
+// Absolute: the Noite runner resolves Dockerfile paths inside the repo;
+// relative to the deploy root (dist/ssr/) this would be ambiguous.
+// `ContainerDurableObject` is the class Void generates for
+// durable-objects/container.ts (verified in dist/ssr/wrangler.json after
+// every build); the containers entry is what gives that class its
+// `ctx.container` handle. A plain container entry (no `scheduling_policy`,
+// which celld rejects, and no `runtime` key) names the image with `image:`:
+// here a Dockerfile path, which Noite builds. `basic` because the image
+// boots an interpreter (node).
+const sandboxDockerfile = fileURLToPath(new URL("./sandbox/Dockerfile", import.meta.url));
+
 export default defineConfig({
   cloudflare: {
     // The Worker name celld serves the app as.
     name: "noite-agent",
+    containers: [
+      {
+        // `name` is required by Void's config validation; celld accepts it
+        // without using it.
+        name: "agent-container",
+        class_name: "ContainerDurableObject",
+        instance_type: "basic",
+        image: sandboxDockerfile,
+      },
+    ],
   },
   worker: {
     compatibility_date: "2026-09-01",
@@ -34,13 +56,9 @@ export default defineConfig({
       ...(AGENT_TOKEN === undefined ? {} : { AGENT_TOKEN }),
     },
   },
-  sandbox: {
-    // RUN-free Dockerfile (Noite only builds images using FROM/COPY/WORKDIR/
-    // ENV/LABEL/USER/EXPOSE/CMD/ENTRYPOINT/ARG/STOPSIGNAL/MAINTAINER): the
-    // non-slim node image ships git, and the shim matches the
-    // @cloudflare/sandbox version void installs (see sandbox/Dockerfile and
-    // test/dockerfile.test.ts). The container-mode agent server bundle is
-    // COPYed in from the build context; `bun run build` writes it first.
-    image: "./sandbox/Dockerfile",
-  },
+  // No `sandbox:` section on purpose: Void Sandboxes stay off until celld
+  // supports cross-isolate RPC stubs/streams. The container object
+  // (durable-objects/container.ts) drives the same RUN-free image directly
+  // through `ctx.container`; the container-mode agent server bundle is
+  // COPYed in from the build context and `bun run build` writes it first.
 });

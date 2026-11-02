@@ -1,10 +1,9 @@
 /**
- * Stable error codes for container failures. Deliberately duck-typed (no
- * runtime import of `@cloudflare/sandbox`, whose bundle needs
- * `cloudflare:workers` and cannot load under node/bun): in-DO errors match
- * on the SDK's `code` string (minifier-safe, unlike class identity), and
- * RPC-transported errors — which keep only `name`/`message` — match on the
- * class name as a fallback. Pure: unit-tested.
+ * Stable error codes for container failures. Deliberately duck-typed: the
+ * DO↔DO call transports failures as plain data keeping only
+ * `name`/`message` (plus a string `code` when the thrower set one), so
+ * matches run on the `code` string first (minifier-safe, unlike class
+ * identity) and on the class name as a fallback. Pure: unit-tested.
  */
 
 export interface DescribedError {
@@ -37,7 +36,7 @@ function messageOf(error: unknown, fallback: string): string {
   return typeof message === "string" && message !== "" ? message : fallback;
 }
 
-/** SDK `code` values with dedicated template codes. */
+/** Container-layer `code` values with dedicated template codes. */
 const BY_CODE: Record<string, { code: string; retryable: boolean }> = {
   CONTAINER_UNAVAILABLE: { code: "container_unavailable", retryable: true },
   RPC_TRANSPORT_ERROR: { code: "container_transport", retryable: true },
@@ -58,10 +57,10 @@ const BY_NAME: Record<string, { code: string; retryable: boolean }> = {
 };
 
 /**
- * Map a container-layer failure to a stable code. Unknown SDK errors keep
- * the SDK's own code (e.g. GIT_CLONE_FAILED); anything else is `internal`.
- * Used both inside the DO (real SDK instances) and in the Worker around DO
- * RPCs (transported errors); `rpc` only changes the fallback status.
+ * Map a container-layer failure to a stable code. Unknown coded errors keep
+ * their own code; anything else is `internal`. Used both inside the DOs and
+ * in the Worker around DO RPCs (transported errors); `rpc` only changes
+ * the fallback status.
  */
 export function describeContainerError(error: unknown, rpc = false): DescribedError {
   const fields = fieldsOf(error);

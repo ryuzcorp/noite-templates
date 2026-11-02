@@ -1,7 +1,7 @@
 /**
  * Repository clone/refresh orchestration, dependency-injected so tests drive
- * it with fakes (the DO class itself cannot load under bun:
- * `@cloudflare/sandbox` needs `cloudflare:workers`). Both the explicit
+ * it with fakes (the DO classes themselves cannot load under bun: they need
+ * `cloudflare:workers`). Both the explicit
  * clone path (`repositoryPump`) and ephemeral-container recovery
  * (`ensureCheckout`, before tasks and diffs) run through `performClone`,
  * so there is exactly one git code path. No timers, no sleeps.

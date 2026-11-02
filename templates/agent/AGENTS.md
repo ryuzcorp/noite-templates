@@ -1,11 +1,13 @@
 # AGENTS.md
 
 A stock Void app (`void` on Vite): a Pi Durable agent harness in a Durable
-Object, with a Void Sandbox container as the tool backend. One sandbox name
-= one `Agent` object = one container + one durable conversation. Two
-runtimes: `worker` (harness in the DO, tools exec in the container) and
-`container` (the whole loop runs in the container; the DO brokers model
-calls).
+Object, with a container as the tool backend driven directly through
+`ctx.container` (no `void/sandbox`: celld cannot pass RPC stubs/streams
+across isolates yet; Void Sandboxes replace the direct container once it
+can). One sandbox name = one `Agent` object + one same-named `Container`
+object = one container + one durable conversation. Two runtimes: `worker`
+(harness in the DO, tools exec in the container) and `container` (the whole
+loop runs in the container; the DO brokers model calls).
 
 ## Commands
 
@@ -16,7 +18,7 @@ calls).
 | `bun run lint` | Run `oxlint`. |
 | `bun run build` | Bundle the agent server into `sandbox/agent/`, then `vite build` (`dist/ssr/wrangler.json` + `dist/client/`). |
 | `bun run test` | Run the tests with `bun test`. |
-| `bun run dev` | Build the agent server, then `vite` (needs a container engine for sandboxes). |
+| `bun run dev` | Build the agent server, then `vite` (worker only; containers need a celld deploy). |
 
 ## Conventions
 
@@ -34,9 +36,13 @@ calls).
   alarm-composition note in `durable-objects/agent.ts`); every callback is
   idempotent. Keep iterations brief: reads queue behind the in-flight one.
 - The sandbox client is injected, never imported, in `src/` (`tools.ts`,
-  `clone-deps.ts`, `server-client.ts` take structural clients): real
-  `getSandbox` in the DO, fakes in tests. No `void/*` import under `src/`
-  or `test/` — no Void runtime under bun.
+  `clone-deps.ts`, `server-client.ts` take structural clients): the
+  container adapter over the container-DO stub in the agent object
+  (`src/container-adapter.ts`), fakes in tests. No `void/*` import under
+  `src/` or `test/` — no Void runtime under bun.
+- Every DO↔DO call takes and returns plain data only (strings, numbers,
+  plain objects, ArrayBuffers): exec results as RPC, container HTTP via
+  `stub.fetch()`. Timeouts cross as milliseconds, never signals.
 - Worker-mode file tools confine paths to the repo dir (`src/paths.ts` +
   a `realpath` check in the container); `exec` always runs with cwd
   `REPO_DIR`. Commands run as argv; only the legacy string-exec seam uses
@@ -55,9 +61,9 @@ calls).
   wall-clock waits in tests (inject `sleep`/`now`).
 - `sandbox/Dockerfile` must stay RUN-free (Noite builds only
   FROM/COPY/WORKDIR/ENV/LABEL/USER/EXPOSE/CMD/ENTRYPOINT/ARG/STOPSIGNAL/MAINTAINER):
-  more tools means publishing an image or adding files with `COPY`. The
-  shim tag must equal the `@cloudflare/sandbox` version in `bun.lock`
-  (`test/dockerfile.test.ts` fails on drift). `sandbox/agent/server.mjs`
+  more tools means publishing an image or adding files with `COPY`. No
+  sandbox-shim — direct `ctx.container` exec needs none
+  (`test/dockerfile.test.ts` fails if one returns). `sandbox/agent/server.mjs`
   is a build artifact (gitignored); the build writes it before the image
   builds.
 - Commit `void.lock.json` (generated Durable Object migration history).

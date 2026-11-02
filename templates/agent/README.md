@@ -1,11 +1,17 @@
 # Agent on Noite
 
 A [Noite](https://github.com/ryuzcorp/noite) app template: a stock [Void](https://void.cloud) app
-serving a Pi Durable agent harness with a [Void Sandbox](https://void.cloud/guide/sandboxes)
-container as its tool backend. Each named sandbox is one Durable Object: durable state lives in
-the object's storage (SQLite tables for the harness transcript, records for repo/task state —
-all surviving restarts and evictions), and model credentials never leave Worker env — in either
-runtime.
+serving a Pi Durable agent harness with a container as its tool backend. Each named sandbox is
+one agent Durable Object plus one container Durable Object: durable state lives in the agent
+object's storage (SQLite tables for the harness transcript, records for repo/task state — all
+surviving restarts and evictions), the container object drives the container directly through
+`ctx.container`, and model credentials never leave Worker env — in either runtime.
+
+The direct container is deliberate, not legacy: celld cannot pass RPC stubs or streams across
+isolate boundaries yet, and Void's sandbox client returns both. [Void
+Sandboxes](https://void.cloud/guide/sandboxes) will replace the direct container once celld
+supports cross-isolate RPC stubs/streams; the agent object keeps its shape and only its
+sandbox client changes.
 
 Two runtimes, one template (`AGENT_RUNTIME`):
 
@@ -23,6 +29,12 @@ Two runtimes, one template (`AGENT_RUNTIME`):
   harness under `openDurableObjectSqliteStorage`, records repository/task operations durably, and
   performs them from the `alarm` hook. RPC methods: `startRepository`, `startTask`,
   `getSandboxState`, `getDiff`.
+- `durable-objects/container.ts` — the per-sandbox container object (native class via
+  `defineDurableObject`, declared in the config's `containers[]`): owns the `ctx.container`
+  handle, starts the container with internet egress, runs exec to completion, and proxies HTTP
+  to container ports. Every RPC takes and returns plain data only (strings, numbers, plain
+  objects, ArrayBuffers) — the celld rule for DO↔DO calls; `fetch` answers with a `Response`
+  through `stub.fetch()` instead.
 - `src/container/agent-server.ts` — the container-mode agent server (plain
   node HTTP): a Harness with the coding tools whose model is a broker
   provider (`src/broker.ts`). Bundled for node by `scripts/build-agent-server.ts` into
@@ -33,12 +45,16 @@ Two runtimes, one template (`AGENT_RUNTIME`):
   and unit-tested with fakes.
 - `src/tools.ts`, `src/clone-deps.ts` — the worker-mode tools and the clone seam over an injected
   sandbox client, unit-tested with fakes.
+- `src/container-adapter.ts` — the sandbox client over the container object: `run`/`exec`/`fetch`
+  plus file operations composed from exec (`test -e`, `cat`, stdin-fed `cat >`). Timeouts cross
+  as milliseconds (signals cannot cross the DO↔DO call). Unit-tested with fakes.
 - `src/auth.ts`, `src/repo-url.ts`, `src/sandbox-name.ts`, `src/paths.ts`, `src/errors.ts`,
   `src/protocol.ts`, `src/model.ts`, `src/transcript.ts`, `src/page.ts` — pure helpers with unit
   tests.
 - `void.config.ts`, `vite.config.ts` — stock Void config: `vite build` writes
-  `dist/ssr/wrangler.json` (read natively by Noite) + `dist/client/`. No celld-config plugin, no
-  `dist/wrangler.json` of our own.
+  `dist/ssr/wrangler.json` (read natively by Noite) + `dist/client/`, with the `containers[]`
+  entry for the container class passed through the `cloudflare` field. No `sandbox:` section
+  (see above), no celld-config plugin, no `dist/wrangler.json` of our own.
 - `sandbox/Dockerfile` — the RUN-free sandbox image (see below). `void.lock.json` pins the
   generated Durable Object migration history; commit it.
 
@@ -124,11 +140,14 @@ no `RUN`, `ADD`, `ONBUILD`, `SHELL`, `HEALTHCHECK`, `VOLUME`, no parser
 directives, no heredocs, no `$` in `FROM` or `COPY --from`. Local `COPY`
 sources must sit inside `sandbox/` (the build context).
 
-The non-slim `node:26.12.1-trixie` base ships git (Void's default slim image
-has none); the `sandbox-shim` `COPY --from` tag must equal the
-`@cloudflare/sandbox` version in `bun.lock` (`test/dockerfile.test.ts` fails
-when they drift). Need more tools than git/node/sh? Either publish an image
-and point `sandbox.image` at it, or add files with `COPY` — never `RUN`.
+The non-slim `node:26.12.1-trixie` base ships git. There is deliberately no
+`sandbox-shim`: the container object drives the image directly through
+`ctx.container` (the engine exec API and bridge networking need no
+in-container agent), so nothing consumes the `@cloudflare/sandbox` shim and
+the Dockerfile pins no version (`test/dockerfile.test.ts` fails if a shim
+reference returns). Need more tools than git/node/sh? Either publish an image
+and point the `containers[]` entry at it, or add files with `COPY` — never
+`RUN`.
 
 ## Repository handling
 
@@ -152,7 +171,7 @@ the container itself is the boundary. Container mode uses the standard
 coding tools directly on the checkout with the same understanding, plus a
 curated tool environment (no secret inheritance).
 
-The sandbox starts with internet access on (`enableInternet`, which `git
+The container starts with internet access on (`enableInternet`, which `git
 clone` needs), fenced off the node, other nodes, and private ranges.
 Outbound code you did not write runs in the container — keep the secrets in
 the Worker.
@@ -164,14 +183,14 @@ bun install
 # Create .env with the vars from the Environment table above (never commit
 # it; there is no .env.example — Void allows only .env locally).
 bun run build
-bun run dev            # needs a container engine for sandboxes
+bun run dev            # worker only; containers need a celld deploy (lab)
 ```
 
 `bun run build` bundles the agent server into `sandbox/agent/server.mjs`
 (build artifact, gitignored) and runs `vite build`, which writes
-`dist/ssr/wrangler.json` + `dist/client/`. Void dev builds the sandbox image
-from `sandbox/Dockerfile`, so a container engine (Docker) is required to
-exercise sandboxes locally.
+`dist/ssr/wrangler.json` + `dist/client/`. Noite deploys that config to
+celld, which builds the sandbox image from `sandbox/Dockerfile` — so
+exercising sandboxes end to end needs a deploy, not just `bun run dev`.
 
 The agent server also runs standalone for debugging:
 `node sandbox/agent/server.mjs` after a build (with `AGENT_SERVER_PORT`,
@@ -179,10 +198,9 @@ The agent server also runs standalone for debugging:
 
 ## Routes
 
-All sandbox routes take `:name` (`[a-z0-9][a-z0-9-]{0,62}`, also Void's
-1–63 character sandbox-id rule); each name is an isolated container +
-conversation. All require the agent token. Every response is JSON, including
-errors.
+All sandbox routes take `:name` (`[a-z0-9][a-z0-9-]{0,62}`); each name is
+an isolated container + conversation. All require the agent token. Every
+response is JSON, including errors.
 
 | Method + path | Body | Result |
 | --- | --- | --- |
@@ -206,7 +224,8 @@ bun run check   # typecheck + lint + build + tests
 ```
 
 Tests live in `test/` (bun test): pure helpers, the clone/tools/server
-adapters with fake sandbox clients, the broker round trip, the pump policy
-with fakes, the Dockerfile shim pin, and the agent server itself driven end
-to end with a faux model and real tools. No Void runtime under bun, no
-sleeps or wall-clock waits.
+adapters with fake sandbox clients, the container adapter (exec/stdin/fetch
+mapping over a fake container client), the broker round trip, the pump policy
+with fakes, the Dockerfile shape (RUN-free, no shim), and the agent server
+itself driven end to end with a faux model and real tools. No Void runtime
+under bun, no sleeps or wall-clock waits.

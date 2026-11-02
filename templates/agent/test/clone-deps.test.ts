@@ -9,7 +9,7 @@ function buf(text: string): ArrayBuffer {
 
 interface RunCall {
   argv: string[];
-  options?: { cwd?: string; signal?: AbortSignal };
+  options?: { cwd?: string; timeoutMs?: number };
 }
 
 class FakeSandbox implements CloneSandbox {
@@ -24,7 +24,7 @@ class FakeSandbox implements CloneSandbox {
 
   async run(
     argv: string[],
-    options?: { cwd?: string; signal?: AbortSignal }
+    options?: { cwd?: string; timeoutMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }> {
     this.runs.push({ argv, options });
     return this.runImpl(argv, options);
@@ -55,7 +55,7 @@ describe("createCloneDeps", () => {
     expect(sandbox.runs).toHaveLength(1);
     expect(sandbox.runs[0]?.argv).toEqual(["sh", "-c", "git status --short"]);
     expect(sandbox.runs[0]?.options?.cwd).toBe(REPO_DIR);
-    expect(sandbox.runs[0]?.options?.signal).toBeInstanceOf(AbortSignal);
+    expect(sandbox.runs[0]?.options?.timeoutMs).toBe(1000);
   });
 
   test("exec reports a non-zero exit as failure", async () => {
@@ -107,7 +107,7 @@ describe("createCloneDeps", () => {
       "https://github.com/org/repo",
       REPO_DIR,
     ]);
-    expect(sandbox.runs[0]?.options?.signal).toBeInstanceOf(AbortSignal);
+    expect(sandbox.runs[0]?.options?.timeoutMs).toBe(120_000);
 
     await deps.checkout("https://github.com/org/repo", {
       targetDir: REPO_DIR,

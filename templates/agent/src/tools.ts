@@ -1,8 +1,13 @@
 /**
- * Worker-mode tools (`exec`, `read_file`, `write_file`) over a Void sandbox
- * (`void/sandbox`). The client is injected (structurally satisfied by the
- * real sandbox client) so tests drive the tools with fakes; this module
- * never imports `void/*` and loads under bun.
+ * Worker-mode tools (`exec`, `read_file`, `write_file`) over the container
+ * object (`durable-objects/container.ts`, via `src/container-adapter.ts`).
+ * The client is injected (structurally satisfied by the container adapter)
+ * so tests drive the tools with fakes; this module never imports `void/*`
+ * and loads under bun.
+ *
+ * Timeouts cross to the container as milliseconds, not signals: an
+ * `AbortSignal` cannot cross the DO↔DO call, so the container object kills
+ * the process past the deadline itself.
  *
  * Confinement is defense-in-depth against accidents and indirect prompt
  * injection, not a sandbox boundary: the model already has unconstrained
@@ -25,7 +30,7 @@ import { truncateText } from "./transcript";
 export interface WorkerToolsSandbox {
   run(
     argv: string[],
-    options?: { cwd?: string; signal?: AbortSignal }
+    options?: { cwd?: string; timeoutMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }>;
   files: {
     readFile(path: string): Promise<Response>;
@@ -63,7 +68,7 @@ export async function execToolResult(
   try {
     const result = await sandbox.run(["sh", "-c", command], {
       cwd: REPO_DIR,
-      signal: AbortSignal.timeout(timeout),
+      timeoutMs: timeout,
     });
     const text = truncateText(
       `$ ${command}\nexit ${result.exitCode}\n--- stdout ---\n${decode(result.stdout)}\n--- stderr ---\n${decode(result.stderr)}`,
@@ -89,7 +94,7 @@ export async function readFileToolResult(
   try {
     // Symlink check in the container: read through the real path.
     const real = await sandbox.run(["realpath", resolved.path], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT),
+      timeoutMs: GIT_TIMEOUT,
     });
     if (real.exitCode !== 0) {
       return errorResult(`no such file: ${inputPath}`);
@@ -125,13 +130,13 @@ export async function writeFileToolResult(
     const leaf = resolved.path.slice(resolved.path.lastIndexOf("/") + 1);
     const parent = resolved.path.slice(0, resolved.path.lastIndexOf("/")) || "/";
     const made = await sandbox.run(["mkdir", "-p", parent], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT),
+      timeoutMs: GIT_TIMEOUT,
     });
     if (made.exitCode !== 0) {
       return errorResult(`could not prepare the parent dir: ${inputPath}`);
     }
     const real = await sandbox.run(["realpath", parent], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT),
+      timeoutMs: GIT_TIMEOUT,
     });
     if (real.exitCode !== 0) {
       return errorResult(`could not prepare the parent dir: ${inputPath}`);
@@ -141,7 +146,7 @@ export async function writeFileToolResult(
       return errorResult(`path escapes the repository (${REPO_DIR})`);
     }
     const link = await sandbox.run(["test", "-L", resolved.path], {
-      signal: AbortSignal.timeout(GIT_TIMEOUT),
+      timeoutMs: GIT_TIMEOUT,
     });
     if (link.exitCode === 0) {
       return errorResult(`refusing to write through a symlink: ${inputPath}`);

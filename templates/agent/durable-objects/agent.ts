@@ -25,9 +25,9 @@ import {
 } from "@earendil-works/pi-durable";
 import { openDurableObjectSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/cloudflare";
 import { defineDurableState, type DurableStateContext } from "void/durable";
-import { getSandbox, type SandboxClient } from "void/sandbox";
 
 import { createCloneDeps, type CloneSandbox } from "../src/clone-deps";
+import { createContainerAdapter, type ContainerClient } from "../src/container-adapter";
 import { pumpAgentOnce, type ContainerTaskRecord, type ModelAnswerOutcome } from "../src/container-pump";
 import type { Env } from "../src/env";
 import { describeContainerError } from "../src/errors";
@@ -47,27 +47,27 @@ import { parseRepoHosts, validateRepositoryUrl, validRef } from "../src/repo-url
 import { createAgentServerClient, type AgentServerSandbox } from "../src/server-client";
 import { createWorkerTools, type WorkerToolsSandbox } from "../src/tools";
 import { fauxTurn, renderMessages, truncateText } from "../src/transcript";
+import { Container, type AgentContainer } from "./container";
 
 /**
  * Pi Durable agent in a Void Durable Object. One named sandbox is one
  * object: durable records live in the object's storage, the pi harness
  * transcript in its SQLite tables (via `openDurableObjectSqliteStorage`),
- * and the Void sandbox it drives is the tool backend.
+ * and the same-named container object it drives is the tool backend.
  *
  * Two runtimes (AGENT_RUNTIME): "worker" (default) runs the harness here
- * with tools exec'ing in the sandbox; "container" runs the whole agent loop
- * as a process in the sandbox, with model calls brokered here so the API
- * key never enters the container.
+ * with tools exec'ing in the container; "container" runs the whole agent
+ * loop as a process in the container, with model calls brokered here so
+ * the API key never enters the container.
  *
  * Alarm composition: Void serializes every method and the alarm hook
  * through one queue, so no `blockConcurrencyWhile` is needed — and every
  * background wakeup (clone pump, harness wake, container pump) multiplexes
- * through the single `alarm` hook via `context.setAlarm`. The sandbox is a
- * separate Void-managed object now, so this object owns its own alarm.
- * Every callback is idempotent. Reads queue behind the in-flight
- * iteration, so iterations stay brief (short pump polls, bounded harness
- * drives); a slow GET during a run is the known cost of the stock
- * durable-state shape, never a hang.
+ * through the single `alarm` hook via `context.setAlarm`. The container is
+ * a separate object now, so this object owns its own alarm. Every callback
+ * is idempotent. Reads queue behind the in-flight iteration, so iterations
+ * stay brief (short pump polls, bounded harness drives); a slow GET during
+ * a run is the known cost of the stock durable-state shape, never a hang.
  */
 
 type AgentState = { name: string };
@@ -86,8 +86,6 @@ const MIRROR_CAP = 131_072;
 const WAKE_DRIVE_MS = 10_000;
 /** Long-poll wait per container-pump iteration (protocol max is 20). */
 const DO_PUMP_POLL_SECONDS = 5;
-
-const SANDBOX_OPTIONS = { enableInternet: true, inactivityTimeoutMs: 10 * 60 * 1000 };
 
 export const MODEL_SETUP_MESSAGE =
   "No model is configured. Set OPENAI_API_KEY and MODEL in Noite Settings -> Environment and redeploy " +
@@ -184,34 +182,51 @@ function entryFor(storage: DurableObjectStorage): AgentEntry {
 }
 
 /**
- * The Void sandbox for this object, resolved lazily: tools are created at
+ * The same-named container object, resolved lazily: tools are created at
  * harness init (when the name may not be set yet) but only run once a task
- * is admitted. Cloning needs egress, hence `enableInternet`.
+ * is admitted. The namespace comes from the environment explicitly (never
+ * the ambient worker binding) so this also works from DO-side callbacks.
+ * Every call takes and returns plain data only — the celld rule for
+ * DO↔DO calls.
+ */
+function containerStub(context: Ctx): DurableObjectStub<AgentContainer> {
+  const name = context.state.name;
+  if (name === "") {
+    throw new Error("sandbox name is not set");
+  }
+  const namespace = context.env["CONTAINER"] as DurableObjectNamespace<AgentContainer> | undefined;
+  if (namespace === undefined) {
+    throw new Error("CONTAINER binding is not configured");
+  }
+  return Container.get(namespace, name);
+}
+
+/**
+ * The sandbox client for this object: the container adapter over the
+ * container stub. `fetch` crosses as `stub.fetch()` (the container object
+ * proxies `/<port>/...` to the container port and answers with a
+ * `Response`); exec crosses as plain-data RPC.
  */
 function sandboxClient(context: Ctx): WorkerToolsSandbox & CloneSandbox & AgentServerSandbox {
-  let client: Promise<SandboxClient> | null = null;
-  const get = (): Promise<SandboxClient> => {
-    if (client === null) {
-      const name = context.state.name;
-      if (name === "") {
-        throw new Error("sandbox name is not set");
-      }
-      client = getSandbox(name, SANDBOX_OPTIONS);
-    }
-    return client;
-  };
-  return {
-    run: async (argv, options) => (await get()).run(argv, options),
-    exec: async (argv, options) => (await get()).exec(argv, options),
-    fetch: async (port, request) => (await get()).fetch(port, request),
-    files: {
-      stat: async (path: string) => (await get()).files.stat(path),
-      readFile: async (path: string) => (await get()).files.readFile(path),
-      writeFile: async (path: string, content: string) => {
-        await (await get()).files.writeFile(path, content);
-      },
+  const client: ContainerClient = {
+    run: async (argv, options) => {
+      const result = await containerStub(context).exec(argv, {
+        ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
+        ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        ...(options?.stdinText === undefined ? {} : { stdinText: options.stdinText }),
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+    },
+    execDetached: async (argv) => {
+      await containerStub(context).execDetached(argv);
+    },
+    fetch: async (port, request) => {
+      const url = new URL(request.url);
+      const proxied = new Request(`http://container/${port}${url.pathname}${url.search}`, request);
+      return containerStub(context).fetch(proxied);
     },
   };
+  return createContainerAdapter(client);
 }
 
 /** The repository record in object storage, as the clone module sees it. */

@@ -15,7 +15,7 @@ function buf(text: string): ArrayBuffer {
 
 interface RunCall {
   argv: string[];
-  options?: { cwd?: string; signal?: AbortSignal };
+  options?: { cwd?: string; timeoutMs?: number };
 }
 
 class FakeSandbox implements WorkerToolsSandbox {
@@ -31,7 +31,7 @@ class FakeSandbox implements WorkerToolsSandbox {
 
   async run(
     argv: string[],
-    options?: { cwd?: string; signal?: AbortSignal }
+    options?: { cwd?: string; timeoutMs?: number }
   ): Promise<{ stdout: ArrayBuffer; stderr: ArrayBuffer; exitCode: number }> {
     this.runs.push({ argv, options });
     return this.runImpl(argv, options);
@@ -70,6 +70,15 @@ describe("worker tools", () => {
     expect(outputText(result)).toContain("warn");
     expect(sandbox.runs[0]?.argv).toEqual(["sh", "-c", "git log --oneline -1"]);
     expect(sandbox.runs[0]?.options?.cwd).toBe(REPO_DIR);
+    expect(sandbox.runs[0]?.options?.timeoutMs).toBe(60_000);
+  });
+
+  test("exec clamps the model timeout to 1 s..300 s", async () => {
+    const sandbox = new FakeSandbox();
+    await execToolResult(sandbox, "a", 999_999);
+    await execToolResult(sandbox, "b", 10);
+    await execToolResult(sandbox, "c", Number.NaN);
+    expect(sandbox.runs.map((run) => run.options?.timeoutMs)).toEqual([300_000, 1000, 60_000]);
   });
 
   test("exec marks a non-zero exit as an error", async () => {

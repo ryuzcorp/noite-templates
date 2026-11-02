@@ -17,15 +17,11 @@ function instructions(dockerfile: string): string[] {
 }
 
 describe("sandbox Dockerfile", () => {
-  test("pins the shim to the @cloudflare/sandbox version in bun.lock", () => {
-    const dockerfile = read("sandbox/Dockerfile");
-    const from = dockerfile.match(/^COPY --from=docker\.io\/cloudflare\/sandbox:([^\s]+)/m);
-    expect(from?.[1]).toBeDefined();
-    // bun.lock is JSONC (trailing commas), so match the pinned spec textually.
-    const lock = read("bun.lock");
-    const pinned = lock.match(/"@cloudflare\/sandbox@([^"]+)"/);
-    expect(pinned?.[1]).toBeDefined();
-    expect(from?.[1]).toBe(pinned?.[1]);
+  test("ships no sandbox shim (direct ctx.container exec needs none)", () => {
+    // Instruction lines only: comments may explain why the shim is gone.
+    const lines = instructions(read("sandbox/Dockerfile")).join("\n");
+    expect(lines).not.toContain("sandbox-shim");
+    expect(lines).not.toContain("cloudflare/sandbox");
   });
 
   test("is RUN-free: only instructions Noite builds", () => {
@@ -74,5 +70,6 @@ describe("sandbox Dockerfile", () => {
     expect(dockerfile).toMatch(/^FROM node:26\.12\.1-trixie$/m);
     expect(dockerfile).toContain("COPY agent/server.mjs /opt/agent/server.mjs");
     expect(dockerfile).toContain("WORKDIR /workspace");
+    expect(dockerfile).toContain("EXPOSE 8787");
   });
 });
