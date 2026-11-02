@@ -4,6 +4,14 @@ import { defineConfig } from 'void/config';
 export default defineConfig({
   worker: {
     compatibility_date: '2026-02-24',
+    vars: {
+      // RELAXED VARIANT ONLY (conformance probe): a disposable lab-only
+      // credential so the app boots without slice 2 (BETTER_AUTH_SECRET
+      // auto-generate). Protects nothing: the lab app holds test data only.
+      // The faithful fixture (conformance-ks-full) must never carry this.
+      BETTER_AUTH_SECRET:
+        '9f2c4a7e1b5d8f03a6c9e2b47d1f5a8c0e4b7d2a5f8c1e6a3d9f0c4b7e2a5d8f1c6',
+    },
   },
   auth: {
     providers: ['email'],
