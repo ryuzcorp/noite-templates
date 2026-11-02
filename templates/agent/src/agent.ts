@@ -1226,7 +1226,7 @@ export class AgentSandbox extends Sandbox<Env> {
       faux.appendResponses([(context) => {
         const turn = fauxTurn(context.messages, shellTool);
         return turn.kind === "tool"
-          ? fauxAssistantMessage([fauxToolCall(turn.name, turn.args)])
+          ? fauxAssistantMessage([fauxToolCall(turn.name, turn.args)], { stopReason: "toolUse" })
           : fauxAssistantMessage(turn.text);
       }]);
     }
