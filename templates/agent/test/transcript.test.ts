@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Message } from "@earendil-works/pi-ai";
 
-import { extractLastUserText, renderMessages, truncateText } from "../src/transcript";
+import { FAUX_COMMAND, extractLastUserText, fauxTurn, renderMessages, truncateText } from "../src/transcript";
 
 const conversation: Message[] = [
   { role: "user", content: "Fix the failing test", timestamp: Date.now() },
@@ -63,5 +63,25 @@ describe("truncateText", () => {
     const cut = truncateText("x".repeat(100), 10);
     expect(cut.length).toBeLessThan(100);
     expect(cut).toContain("truncated");
+  });
+
+  test("faux turns call the shell tool, then answer with its real output", () => {
+    const task: Message[] = [{ role: "user", content: "List the files", timestamp: 0 }];
+    expect(fauxTurn(task, "bash")).toEqual({ args: { command: FAUX_COMMAND }, kind: "tool", name: "bash" });
+    const afterTool: Message[] = [
+      ...task,
+      {
+        content: [{ text: "abc123 Initial commit\nREADME", type: "text" }],
+        isError: false,
+        role: "toolResult",
+        timestamp: 0,
+        toolCallId: "1",
+        toolName: "exec",
+      },
+    ];
+    const answer = fauxTurn(afterTool, "exec");
+    expect(answer.kind).toBe("text");
+    expect(answer.kind === "text" ? answer.text : "").toContain("abc123 Initial commit");
+    expect(answer.kind === "text" ? answer.text : "").toContain("Task: List the files");
   });
 });

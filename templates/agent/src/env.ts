@@ -11,4 +11,10 @@ export interface Env {
   OPENAI_BASE_URL?: string;
   /** API key for the endpoint. Secret: Settings only, baked at build. */
   OPENAI_API_KEY?: string;
+  /** Bearer token gating every /sandboxes/* route. Secret: Settings only. */
+  AGENT_TOKEN?: string;
+  /** Comma-separated repository host allowlist (default "github.com"). */
+  REPO_HOSTS?: string;
+  /** Agent runtime: "worker" (default) or "container". */
+  AGENT_RUNTIME?: string;
 }

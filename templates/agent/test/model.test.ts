@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createModels } from "@earendil-works/pi-ai";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 
-import { DONOR_MODEL_ID, parseModelRef, withEndpointModels } from "../src/model";
+import { agentRuntime, DONOR_MODEL_ID, parseModelRef, withEndpointModels } from "../src/model";
 
 describe("parseModelRef", () => {
   test("faux selects the faux provider", () => {
@@ -18,6 +18,17 @@ describe("parseModelRef", () => {
   test("empty never silently enters test mode", () => {
     expect(parseModelRef("")).toEqual({ kind: "openai", modelId: "" });
     expect(parseModelRef(undefined)).toMatchObject({ kind: "openai" });
+  });
+});
+
+describe("agentRuntime", () => {
+  test("container selects container mode; everything else is worker", () => {
+    expect(agentRuntime("container")).toBe("container");
+    expect(agentRuntime(" Container ")).toBe("container");
+    expect(agentRuntime(undefined)).toBe("worker");
+    expect(agentRuntime("")).toBe("worker");
+    expect(agentRuntime("worker")).toBe("worker");
+    expect(agentRuntime("contianer")).toBe("worker");
   });
 });
 

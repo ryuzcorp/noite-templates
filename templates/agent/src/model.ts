@@ -30,6 +30,18 @@ export function parseModelRef(raw: string | undefined | null): ModelSelection {
   return { kind: "openai", modelId };
 }
 
+export type AgentRuntime = "worker" | "container";
+
+/**
+ * Parse AGENT_RUNTIME. "container" runs the whole agent loop in the sandbox
+ * (model calls brokered by the DO); anything else — including a typo —
+ * falls back to the default "worker" tools-in-sandbox mode. GET reports the
+ * active runtime so a typo is visible.
+ */
+export function agentRuntime(raw: string | undefined | null): AgentRuntime {
+  return (raw ?? "").trim().toLowerCase() === "container" ? "container" : "worker";
+}
+
 /** Donor entry custom-endpoint ids clone (limits are approximations). */
 export const DONOR_MODEL_ID = "gpt-5-mini";
 

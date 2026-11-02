@@ -9,9 +9,16 @@ import { build } from "esbuild";
  * the container image pins to $SANDBOX_IMAGE when set (default is the
  * stock cloudflare/sandbox image), and `vars` carry over from the
  * committed config. Noite app env vars never reach Worker code at runtime,
- * so every AI value (MODEL, OPENAI_API_KEY, OPENAI_BASE_URL) is set in
- * Settings -> Environment and baked in here at build time; the committed
- * vars are only fallbacks. Nothing is committed: overrides never touch git.
+ * so every operator value (MODEL, OPENAI_API_KEY, OPENAI_BASE_URL,
+ * AGENT_TOKEN, REPO_HOSTS, AGENT_RUNTIME) is set in Settings ->
+ * Environment and baked in here at build time; the committed vars are
+ * only fallbacks (never real secrets). Nothing is committed: overrides
+ * never touch git.
+ *
+ * Container mode also bundles src/container/agent-server.ts (esbuild,
+ * platform node) into a single file whose text is embedded in the Worker
+ * bundle via `define` (see src/container/embedded.ts); the DO writes that
+ * text into the container and starts it with `node`.
  */
 
 const APP_ROOT = path.resolve(import.meta.dirname, "..");
@@ -92,8 +99,21 @@ export interface BuildEnv {
   readonly MODEL?: string | undefined;
   readonly OPENAI_API_KEY?: string | undefined;
   readonly OPENAI_BASE_URL?: string | undefined;
+  readonly AGENT_TOKEN?: string | undefined;
+  readonly REPO_HOSTS?: string | undefined;
+  readonly AGENT_RUNTIME?: string | undefined;
   readonly SANDBOX_IMAGE?: string | undefined;
 }
+
+/** Operator values baked from the build env over the committed fallbacks. */
+export const BAKED_VARS = [
+  "MODEL",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "AGENT_TOKEN",
+  "REPO_HOSTS",
+  "AGENT_RUNTIME",
+] as const;
 
 /** Derive the deploy config from parsed wrangler.jsonc. Pure: unit-tested. */
 export function deriveCelldConfig(
@@ -123,7 +143,7 @@ export function deriveCelldConfig(
     config["vars"] !== undefined && typeof config["vars"] === "object" && config["vars"] !== null
       ? (config["vars"] as Record<string, unknown>)
       : {};
-  for (const key of ["MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const) {
+  for (const key of BAKED_VARS) {
     const value = buildEnv[key]?.trim();
     if (value !== undefined && value !== "") {
       vars[key] = value;
@@ -140,6 +160,9 @@ async function main(): Promise<void> {
     MODEL: process.env["MODEL"],
     OPENAI_API_KEY: process.env["OPENAI_API_KEY"],
     OPENAI_BASE_URL: process.env["OPENAI_BASE_URL"],
+    AGENT_TOKEN: process.env["AGENT_TOKEN"],
+    REPO_HOSTS: process.env["REPO_HOSTS"],
+    AGENT_RUNTIME: process.env["AGENT_RUNTIME"],
     SANDBOX_IMAGE: process.env["SANDBOX_IMAGE"],
   });
   mkdirSync(path.join(APP_ROOT, "dist"), { recursive: true });
@@ -147,6 +170,23 @@ async function main(): Promise<void> {
     path.join(APP_ROOT, "dist", "wrangler.json"),
     `${JSON.stringify(config, null, 2)}\n`,
   );
+
+  // Container-mode agent server: one self-contained node file. Its text is
+  // embedded in the Worker bundle below; the dist copy is also handy for
+  // inspection and local runs (`node dist/agent-server.mjs`).
+  await build({
+    entryPoints: [path.join(APP_ROOT, "src", "container", "agent-server.ts")],
+    outfile: path.join(APP_ROOT, "dist", "agent-server.mjs"),
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "node22",
+    logLevel: "warning",
+  });
+  const agentServer = readFileSync(path.join(APP_ROOT, "dist", "agent-server.mjs"), "utf-8");
+  if (!agentServer.includes("agent-server ready")) {
+    throw new Error("agent server bundle looks wrong (missing the ready marker)");
+  }
 
   await build({
     entryPoints: [path.join(APP_ROOT, "src", "index.ts")],
@@ -156,6 +196,7 @@ async function main(): Promise<void> {
     platform: "browser",
     target: "es2022",
     logLevel: "warning",
+    define: { AGENT_SERVER_SOURCE: JSON.stringify(agentServer) },
     // Resolved by the runtime, not the bundle: workerd provides
     // cloudflare:workers, and nodejs_compat (see compatibility_flags)
     // provides the node:* builtins the Sandbox SDK imports.

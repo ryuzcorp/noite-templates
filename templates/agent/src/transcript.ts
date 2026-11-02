@@ -80,3 +80,29 @@ export function extractLastUserText(messages: readonly Message[]): string | unde
   }
   return undefined;
 }
+
+/** The command the faux model runs: proves the tool path reaches the checkout. */
+export const FAUX_COMMAND = "git log --oneline -1 && ls -1";
+
+/**
+ * One scripted faux turn. A turn that follows a tool result answers with that
+ * result's text, so the transcript shows real container output; any other turn
+ * calls the shell tool (`exec` in worker mode, `bash` in container mode) with
+ * {@link FAUX_COMMAND}. The full loop (model → tool in the container → model)
+ * runs with no credentials.
+ */
+export function fauxTurn(
+  messages: readonly Message[],
+  shellTool: string
+): { kind: "tool"; name: string; args: { command: string } } | { kind: "text"; text: string } {
+  const last = messages.at(-1);
+  if (last !== undefined && last.role === "toolResult") {
+    const output = contentText(last.content).trim();
+    const task = extractLastUserText(messages) ?? "(no task text)";
+    return {
+      kind: "text",
+      text: `[faux test mode] Task: ${task}\nThe ${last.toolName} tool returned:\n${truncateText(output, 2000)}`,
+    };
+  }
+  return { kind: "tool", name: shellTool, args: { command: FAUX_COMMAND } };
+}
