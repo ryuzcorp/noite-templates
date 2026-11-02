@@ -32,6 +32,13 @@
     // the secret OPENAI_API_KEY (Noite Settings -> Environment), never here.
     // AI Gateway users point this at
     // https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai
-    "OPENAI_BASE_URL": "https://api.openai.com/v1"
+    "OPENAI_BASE_URL": "https://api.openai.com/v1",
+    // Repository host allowlist for POST /repository (comma list).
+    "REPO_HOSTS": "github.com",
+    // Agent runtime: "worker" (tools in the sandbox, default) or
+    // "container" (the whole agent loop runs in the sandbox).
+    "AGENT_RUNTIME": "worker"
+    // Secrets (never committed, baked from Settings -> Environment at
+    // build time): OPENAI_API_KEY, AGENT_TOKEN.
   }
 }

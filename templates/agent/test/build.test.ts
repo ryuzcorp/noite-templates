@@ -29,19 +29,25 @@ describe("deriveCelldConfig", () => {
     ]);
   });
 
-  test("Settings env bakes every AI var over the committed fallbacks", () => {
+  test("Settings env bakes every operator var over the committed fallbacks", () => {
     const config = deriveCelldConfig(
       { vars: { MODEL: "committed", OPENAI_API_KEY: "placeholder" } },
       {
         MODEL: "custom-model",
         OPENAI_API_KEY: "build-time-token",
         OPENAI_BASE_URL: "https://gateway.example/openai",
+        AGENT_TOKEN: "agent-token",
+        REPO_HOSTS: "github.com,gitlab.example.com",
+        AGENT_RUNTIME: "container",
       }
     );
     expect(config["vars"]).toEqual({
       MODEL: "custom-model",
       OPENAI_API_KEY: "build-time-token",
       OPENAI_BASE_URL: "https://gateway.example/openai",
+      AGENT_TOKEN: "agent-token",
+      REPO_HOSTS: "github.com,gitlab.example.com",
+      AGENT_RUNTIME: "container",
     });
   });
 
