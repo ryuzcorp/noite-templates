@@ -11,6 +11,7 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 import type { EventsResponse, ModelAnswer, ModelRequestPayload } from "./protocol";
+import type { EnsureOutcome } from "./repo-clone";
 
 export type ContainerTaskStatus = "idle" | "starting" | "running" | "done" | "failed";
 
@@ -93,6 +94,16 @@ export interface PumpDeps {
   client: AgentServerClient;
   store: PumpStore;
   model: PumpModel;
+  /** Long-poll wait per iteration; default PUMP_POLL_SECONDS. The DO passes
+   * a shorter wait so reads queue behind a briefer iteration. */
+  pollSeconds?: number;
+  /**
+   * Restore the checkout before a starting task submits (the alarm performs
+   * the slow `ensureCheckout` the POST must never wait on). A failed
+   * restore fails the task with a clear error; running tasks skip it (a
+   * mid-run recycle fails loudly on the boot-id change instead).
+   */
+  prepareCheckout?: () => Promise<EnsureOutcome>;
 }
 
 function failed(now: number, task: ContainerTaskRecord, error: string): ContainerTaskRecord {
@@ -105,10 +116,26 @@ function failed(now: number, task: ContainerTaskRecord, error: string): Containe
  * there is nothing to do.
  */
 export async function pumpAgentOnce(deps: PumpDeps): Promise<PumpOutcome> {
-  const { now, client, store, model } = deps;
+  const { now, client, store, model, pollSeconds, prepareCheckout } = deps;
+  const waitSeconds = pollSeconds ?? PUMP_POLL_SECONDS;
   const task = await store.loadTask();
   if (task === null || task.status === "idle" || task.status === "done" || task.status === "failed") {
     return { action: "stop" };
+  }
+
+  if (task.status === "starting" && prepareCheckout !== undefined) {
+    let prepared: EnsureOutcome;
+    try {
+      prepared = await prepareCheckout();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await store.saveTask(failed(now(), task, `checkout restore failed: ${detail}`));
+      return { action: "stop" };
+    }
+    if (!prepared.ok) {
+      await store.saveTask(failed(now(), task, `checkout restore failed: ${prepared.message}`));
+      return { action: "stop" };
+    }
   }
 
   try {
@@ -152,7 +179,7 @@ export async function pumpAgentOnce(deps: PumpDeps): Promise<PumpOutcome> {
 
   let batch: EventsResponse;
   try {
-    batch = await client.events(current.cursor, PUMP_POLL_SECONDS);
+    batch = await client.events(current.cursor, waitSeconds);
   } catch (error) {
     const failures = current.failures + 1;
     if (failures >= PUMP_MAX_FAILURES) {

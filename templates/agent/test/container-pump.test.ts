@@ -247,6 +247,18 @@ describe("pumpAgentOnce", () => {
     expect(harness.task?.status).toBe("running");
   });
 
+  test("a custom pollSeconds overrides the default long-poll wait", async () => {
+    const harness = makeHarness({ ...STARTING, status: "running", bootId: "boot-1" });
+    let seenWait = -1;
+    harness.server.eventsImpl = async (_after, waitSeconds) => {
+      seenWait = waitSeconds;
+      return { cursor: 0, bootId: "boot-1", run: { status: "running" }, pendingRequests: [], events: [] };
+    };
+    harness.deps.pollSeconds = 5;
+    expect(await pumpAgentOnce(harness.deps)).toEqual({ action: "continue" });
+    expect(seenWait).toBe(5);
+  });
+
   test("a failed server run surfaces its error", async () => {
     const harness = makeHarness({ ...STARTING, status: "running", bootId: "boot-1" });
     harness.server.eventsImpl = async () => ({
@@ -259,5 +271,43 @@ describe("pumpAgentOnce", () => {
     expect(await pumpAgentOnce(harness.deps)).toEqual({ action: "stop" });
     expect(harness.task?.status).toBe("failed");
     expect(harness.task?.error).toBe("tool blew up");
+  });
+
+  test("a failed checkout restore fails a starting task before the server is touched", async () => {
+    const harness = makeHarness({ ...STARTING });
+    let touched = false;
+    harness.server.ensureUpImpl = async () => {
+      touched = true;
+    };
+    harness.deps.prepareCheckout = async () => ({ ok: false, message: "clone failed (exit 128)" });
+    expect(await pumpAgentOnce(harness.deps)).toEqual({ action: "stop" });
+    expect(harness.task?.status).toBe("failed");
+    expect(harness.task?.error).toContain("checkout restore failed");
+    expect(touched).toBe(false);
+  });
+
+  test("a restored checkout submits; running tasks skip the restore", async () => {
+    const starting = makeHarness({ ...STARTING });
+    const order: string[] = [];
+    starting.deps.prepareCheckout = async () => {
+      order.push("restore");
+      return { ok: true, restored: true };
+    };
+    starting.server.submitImpl = async (text) => {
+      order.push("submit");
+      expect(text).toBe("do it");
+      return { bootId: "boot-1" };
+    };
+    expect(await pumpAgentOnce(starting.deps)).toEqual({ action: "continue" });
+    expect(order).toEqual(["restore", "submit"]);
+
+    const running = makeHarness({ ...STARTING, status: "running", bootId: "boot-1" });
+    let restores = 0;
+    running.deps.prepareCheckout = async () => {
+      restores += 1;
+      return { ok: true, restored: false };
+    };
+    expect(await pumpAgentOnce(running.deps)).toEqual({ action: "continue" });
+    expect(restores).toBe(0);
   });
 });
