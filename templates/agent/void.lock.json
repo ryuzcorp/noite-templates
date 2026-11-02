@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "source": {
+    "name": "noite-agent"
+  },
+  "resolved": {
+    "name": "noite-agent",
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "AGENT",
+          "class_name": "AgentDurableObject"
+        }
+      ]
+    },
+    "migrations": [
+      {
+        "tag": "void-durable-agent-v1",
+        "new_sqlite_classes": [
+          "AgentDurableObject"
+        ]
+      }
+    ]
+  },
+  "text": "{\n  \"name\": \"noite-agent\",\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"AGENT\",\n        \"class_name\": \"AgentDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-agent-v1\",\n      \"new_sqlite_classes\": [\n        \"AgentDurableObject\"\n      ]\n    }\n  ]\n}\n"
+}

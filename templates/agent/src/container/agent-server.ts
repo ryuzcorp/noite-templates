@@ -5,9 +5,10 @@
  * working directly on the container checkout; model calls are brokered to
  * the DO, so no API key ever enters the container (see `../broker.ts`).
  *
- * Bundled by `scripts/build.ts` (esbuild, platform node) into a single file
- * the DO writes into the container and starts with `node`. Also runnable
- * under bun directly, which is how the E2E test drives it.
+ * Bundled by `scripts/build-agent-server.ts` (esbuild, platform node) into
+ * `sandbox/agent/server.mjs`, which the Dockerfile COPYs to
+ * `/opt/agent/server.mjs`; the DO starts it there with `node`. Also
+ * runnable under bun directly, which is how the E2E test drives it.
  *
  * Protocol (see `../protocol.ts`):
  *   GET  /health                     -> {ok, bootId}

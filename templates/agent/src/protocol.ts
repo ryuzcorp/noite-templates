@@ -9,11 +9,9 @@ import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
 /** Port the agent server listens on inside the container. */
 export const AGENT_SERVER_PORT = 8787;
 
-/** Where the DO writes the bundled server before starting it. */
-export const AGENT_SERVER_PATH = "/workspace/.agent/agent-server.mjs";
-
-/** Fixed process id so a restart finds (and replaces) the old server. */
-export const AGENT_SERVER_PROCESS_ID = "agent-server";
+/** Where the image ships the bundled server (Dockerfile COPY); the DO starts
+ * it with `node` and never writes it. */
+export const AGENT_SERVER_PATH = "/opt/agent/server.mjs";
 
 /** Ephemeral harness storage inside the container (lost on recycle). */
 export const AGENT_STATE_DIR = "/workspace/.agent";

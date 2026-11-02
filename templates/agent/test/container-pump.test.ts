@@ -247,6 +247,18 @@ describe("pumpAgentOnce", () => {
     expect(harness.task?.status).toBe("running");
   });
 
+  test("a custom pollSeconds overrides the default long-poll wait", async () => {
+    const harness = makeHarness({ ...STARTING, status: "running", bootId: "boot-1" });
+    let seenWait = -1;
+    harness.server.eventsImpl = async (_after, waitSeconds) => {
+      seenWait = waitSeconds;
+      return { cursor: 0, bootId: "boot-1", run: { status: "running" }, pendingRequests: [], events: [] };
+    };
+    harness.deps.pollSeconds = 5;
+    expect(await pumpAgentOnce(harness.deps)).toEqual({ action: "continue" });
+    expect(seenWait).toBe(5);
+  });
+
   test("a failed server run surfaces its error", async () => {
     const harness = makeHarness({ ...STARTING, status: "running", bootId: "boot-1" });
     harness.server.eventsImpl = async () => ({

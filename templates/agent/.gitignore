@@ -4,11 +4,15 @@ node_modules
 # output
 dist
 .wrangler
+.void/
+.cloudflare/
+.void-wrangler.jsonc
 
-# local environment: app env vars for `celld dev` live here, never committed
-.dev.vars
-.dev.vars*
-!.dev.vars.example
+# container-mode agent server bundle (build artifact: `bun run build` writes
+# it into the sandbox build context before the image builds)
+sandbox/agent/
+
+# local environment: app env vars for `bun run dev` live here, never committed
 .env
 .env.*
 !.env.example

@@ -93,6 +93,9 @@ export interface PumpDeps {
   client: AgentServerClient;
   store: PumpStore;
   model: PumpModel;
+  /** Long-poll wait per iteration; default PUMP_POLL_SECONDS. The DO passes
+   * a shorter wait so reads queue behind a briefer iteration. */
+  pollSeconds?: number;
 }
 
 function failed(now: number, task: ContainerTaskRecord, error: string): ContainerTaskRecord {
@@ -105,7 +108,8 @@ function failed(now: number, task: ContainerTaskRecord, error: string): Containe
  * there is nothing to do.
  */
 export async function pumpAgentOnce(deps: PumpDeps): Promise<PumpOutcome> {
-  const { now, client, store, model } = deps;
+  const { now, client, store, model, pollSeconds } = deps;
+  const waitSeconds = pollSeconds ?? PUMP_POLL_SECONDS;
   const task = await store.loadTask();
   if (task === null || task.status === "idle" || task.status === "done" || task.status === "failed") {
     return { action: "stop" };
@@ -152,7 +156,7 @@ export async function pumpAgentOnce(deps: PumpDeps): Promise<PumpOutcome> {
 
   let batch: EventsResponse;
   try {
-    batch = await client.events(current.cursor, PUMP_POLL_SECONDS);
+    batch = await client.events(current.cursor, waitSeconds);
   } catch (error) {
     const failures = current.failures + 1;
     if (failures >= PUMP_MAX_FAILURES) {

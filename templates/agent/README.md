@@ -1,10 +1,11 @@
 # Agent on Noite
 
-A [Noite](https://github.com/ryuzcorp/noite) app template: a Pi Durable agent
-harness with a Cloudflare Sandbox container as its tool backend. Each named
-sandbox is one Durable Object: durable state lives in the object's SQLite
-storage (survives restarts and evictions), and model credentials never leave
-Worker env — in either runtime.
+A [Noite](https://github.com/ryuzcorp/noite) app template: a stock [Void](https://void.cloud) app
+serving a Pi Durable agent harness with a [Void Sandbox](https://void.cloud/guide/sandboxes)
+container as its tool backend. Each named sandbox is one Durable Object: durable state lives in
+the object's storage (SQLite tables for the harness transcript, records for repo/task state —
+all surviving restarts and evictions), and model credentials never leave Worker env — in either
+runtime.
 
 Two runtimes, one template (`AGENT_RUNTIME`):
 
@@ -16,25 +17,30 @@ Two runtimes, one template (`AGENT_RUNTIME`):
 
 ## Architecture
 
-- `src/index.ts` — the Worker: auth, routes, validation, and a small human
-  page. All state lives in the Durable Object; the Worker holds no state.
-- `src/agent.ts` — `AgentSandbox extends Sandbox`: opens the pi harness
-  under `blockConcurrencyWhile` (SQLite via
-  `openDurableObjectSqliteStorage`), records repository/task operations
-  durably, and performs them from scheduled callbacks. RPC methods:
-  `startRepository`, `startTask`, `getSandboxState`, `getDiff`
-  (plus the `*Pump`/`harnessWake` alarm callbacks).
+- `routes/` — Void file routes (`defineHandler`): auth, validation, and rendering. All state
+  lives in the Durable Object; routes hold no state.
+- `durable-objects/agent.ts` — the per-sandbox agent object (`defineDurableState`): opens the pi
+  harness under `openDurableObjectSqliteStorage`, records repository/task operations durably, and
+  performs them from the `alarm` hook. RPC methods: `startRepository`, `startTask`,
+  `getSandboxState`, `getDiff`.
 - `src/container/agent-server.ts` — the container-mode agent server (plain
   node HTTP): a Harness with the coding tools whose model is a broker
-  provider (`src/broker.ts`). Bundled for node by `scripts/build.ts` and
-  embedded in the Worker bundle; the DO writes it into the container.
-- `src/container-pump.ts` — the DO-side pump policy (submit → long-poll →
-  mirror → answer), dependency-injected and unit-tested with fakes.
-- `src/auth.ts`, `src/repo-url.ts`, `src/paths.ts`, `src/errors.ts`,
-  `src/protocol.ts`, `src/model.ts`, `src/transcript.ts` — pure helpers
-  with unit tests.
-- `scripts/build.ts` — esbuild bundles to `dist/` plus the deploy-root
-  `dist/wrangler.json` derived from `wrangler.jsonc`.
+  provider (`src/broker.ts`). Bundled for node by `scripts/build-agent-server.ts` into
+  `sandbox/agent/server.mjs`, COPYed into the image at `/opt/agent/server.mjs`, and started there
+  by the DO with `node`.
+- `src/server-client.ts` — the DO-side client for that server (start + `sandbox.fetch`), with the
+  pump policy in `src/container-pump.ts` (submit → poll → mirror → answer), dependency-injected
+  and unit-tested with fakes.
+- `src/tools.ts`, `src/clone-deps.ts` — the worker-mode tools and the clone seam over an injected
+  sandbox client, unit-tested with fakes.
+- `src/auth.ts`, `src/repo-url.ts`, `src/sandbox-name.ts`, `src/paths.ts`, `src/errors.ts`,
+  `src/protocol.ts`, `src/model.ts`, `src/transcript.ts`, `src/page.ts` — pure helpers with unit
+  tests.
+- `void.config.ts`, `vite.config.ts` — stock Void config: `vite build` writes
+  `dist/ssr/wrangler.json` (read natively by Noite) + `dist/client/`. No celld-config plugin, no
+  `dist/wrangler.json` of our own.
+- `sandbox/Dockerfile` — the RUN-free sandbox image (see below). `void.lock.json` pins the
+  generated Durable Object migration history; commit it.
 
 No HTTP request waits on slow work. Noite's edge answers 504 after 30 s
 without response headers, while a container cold start can take ~90 s and a
@@ -45,18 +51,18 @@ record in container mode), never from an instance field.
 
 ### Alarm composition (read before touching the pumps)
 
-`AgentSandbox` deliberately has **no `alarm()` override**. The base
-`Container.alarm()` owns the DO alarm: its `sleepAfter` loop and its
-`container_schedules` table. Every background wakeup here goes through
-`this.schedule()`, which inserts a due row that `super.alarm()` executes
-and deletes. Direct `setAlarm`/`deleteAlarm` calls would clobber the
-container's own schedule and are never used.
+Void serializes every Durable Object method and the `alarm` hook through one
+queue, so this object owns a single alarm and needs no other concurrency
+gate. Every background wakeup (clone pump, harness wake, container pump)
+multiplexes through the `alarm` hook via `context.setAlarm`: clone first
+(nothing else can be pending while a clone runs), then the runtime's pump,
+re-arming while work remains. Alarms are durable, so a pump chain survives
+DO eviction; they run at-least-once, so every callback is idempotent.
 
-Consequences: schedule rows are durable, so a pump chain survives DO
-eviction; rows run at-least-once (deleted after the callback returns), so
-every callback (`harnessWake`, `repositoryPump`, `agentPump`) is
-idempotent; and a container that keeps running keeps the alarm loop alive
-by itself, which is also what enforces `sleepAfter`.
+One consequence of the stock shape: reads queue behind the in-flight
+iteration, so iterations stay brief (short pump polls, a bounded harness
+drive) and a GET during a run can take a few seconds. That is expected —
+never a hang, and POSTs still answer at once.
 
 ### Container-mode broker protocol
 
@@ -86,13 +92,15 @@ renders secrets.
 ## Environment
 
 Set these in Noite (Settings -> Environment) and redeploy: the build bakes
-them into `dist/wrangler.json` vars, so Worker code sees them at runtime.
-The committed `wrangler.jsonc` values are only fallbacks. Never commit
-real values; rotate by changing Settings and redeploying.
+them into `dist/ssr/wrangler.json` vars through `worker.vars` in `void.config.ts`, so Worker code
+sees them at runtime. The committed fallbacks are only defaults. Never commit
+real values; rotate by changing Settings and redeploying. There is deliberately no `env.ts`
+schema: Void refuses `worker.vars` names that duplicate schema server keys, so routes and the DO
+read these straight from the Worker env.
 
 | Var | Required | What |
 | --- | --- | --- |
-| `AGENT_TOKEN` | yes | Bearer token for every `/sandboxes/*` route. Secret: Settings only, baked at build, never committed. |
+| `AGENT_TOKEN` | yes | Bearer [REDACTED] for every `/sandboxes/*` route. Secret: Settings only, baked at build, never committed. |
 | `MODEL` | yes | Model id, e.g. `gpt-5-mini`. The exact value `faux` selects pi-ai's faux provider instead. On a custom endpoint any id works (limits are approximated). |
 | `OPENAI_BASE_URL` | no | Any OpenAI-compatible chat-completions base URL (default `https://api.openai.com/v1`). AI Gateway users point this at `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/openai`. |
 | `OPENAI_API_KEY` | for real models | API key for the endpoint. Secret: Settings only, baked at build, never committed. |
@@ -103,10 +111,24 @@ real values; rotate by changing Settings and redeploying.
 durable loop still runs against the real container. Never use it in
 production.
 
-Baking secrets into `dist/wrangler.json` is load-bearing (Worker code
-cannot see app env at runtime) and ships the secrets to celld as the
-deploy config — the same tradeoff as the model key. `.dev.vars` (local
-only) is gitignored; never commit it.
+Baking secrets into the built vars is load-bearing (Worker code cannot see
+app env at runtime) and ships the secrets to celld as the deploy config —
+the same tradeoff as the model key.
+
+## Sandbox image
+
+`sandbox/Dockerfile` is the sandbox image, and it must stay RUN-free: Noite
+only builds Dockerfiles using `FROM`, `COPY`, `WORKDIR`, `ENV`, `LABEL`,
+`USER`, `EXPOSE`, `CMD`, `ENTRYPOINT`, `ARG`, `STOPSIGNAL`, `MAINTAINER` —
+no `RUN`, `ADD`, `ONBUILD`, `SHELL`, `HEALTHCHECK`, `VOLUME`, no parser
+directives, no heredocs, no `$` in `FROM` or `COPY --from`. Local `COPY`
+sources must sit inside `sandbox/` (the build context).
+
+The non-slim `node:26.12.1-trixie` base ships git (Void's default slim image
+has none); the `sandbox-shim` `COPY --from` tag must equal the
+`@cloudflare/sandbox` version in `bun.lock` (`test/dockerfile.test.ts` fails
+when they drift). Need more tools than git/node/sh? Either publish an image
+and point `sandbox.image` at it, or add files with `COPY` — never `RUN`.
 
 ## Repository handling
 
@@ -130,48 +152,51 @@ the container itself is the boundary. Container mode uses the standard
 coding tools directly on the checkout with the same understanding, plus a
 curated tool environment (no secret inheritance).
 
-The stock container starts with internet access on (the SDK default;
-`git clone` needs it), fenced off the node, other nodes, and private
-ranges. Outbound code you did not write runs in the container — keep the
-secrets in the Worker.
+The sandbox starts with internet access on (`enableInternet`, which `git
+clone` needs), fenced off the node, other nodes, and private ranges.
+Outbound code you did not write runs in the container — keep the secrets in
+the Worker.
 
 ## Local development
 
 ```sh
 bun install
-cp .dev.vars.example .dev.vars   # then fill in the tokens
+# Create .env with the vars from the Environment table above (never commit
+# it; there is no .env.example — Void allows only .env locally).
 bun run build
-celld dev
+bun run dev            # needs a container engine for sandboxes
 ```
 
-`bun run build` writes `dist/worker.js`, `dist/agent-server.mjs`, and
-`dist/wrangler.json`. The container is the stock `cloudflare/sandbox`
-image on the same release line as the `@cloudflare/sandbox` dependency —
-no image to build or publish. Setting `SANDBOX_IMAGE=<ref>` at build time
-pins a custom image instead (e.g. one with extra toolchain baked in).
+`bun run build` bundles the agent server into `sandbox/agent/server.mjs`
+(build artifact, gitignored) and runs `vite build`, which writes
+`dist/ssr/wrangler.json` + `dist/client/`. Void dev builds the sandbox image
+from `sandbox/Dockerfile`, so a container engine (Docker) is required to
+exercise sandboxes locally.
 
 The agent server also runs standalone for debugging:
-`node dist/agent-server.mjs` (with `AGENT_SERVER_PORT`, `AGENT_SERVER_DIR`,
-`AGENT_SERVER_REPO` to point it at scratch dirs).
+`node sandbox/agent/server.mjs` after a build (with `AGENT_SERVER_PORT`,
+`AGENT_SERVER_DIR`, `AGENT_SERVER_REPO` to point it at scratch dirs).
 
 ## Routes
 
-All sandbox routes take `:name` (`[a-z0-9][a-z0-9-]{0,63}`); each name is an
-isolated container + conversation. All require the agent token.
+All sandbox routes take `:name` (`[a-z0-9][a-z0-9-]{0,62}`, also Void's
+1–63 character sandbox-id rule); each name is an isolated container +
+conversation. All require the agent token. Every response is JSON, including
+errors.
 
 | Method + path | Body | Result |
 | --- | --- | --- |
 | `GET /` | — | Human page: token, name, repo, task, state, diff forms. No auth (static, no secrets). |
 | `POST /sandboxes/:name/repository` | `{url, ref?}` | Record a clone/refresh, run it in the background. → `202 {status: "cloning"}`. 400 bad URL/ref/host, 409 while cloning. |
 | `POST /sandboxes/:name/task` | `{text}` or raw text | Admit one task, run it in the background. → `202 {status: "running"}`. 409 while a task runs (one run per sandbox), 503 without a model. |
-| `GET /sandboxes/:name` | — | `{runtime, busy, model, repository, task, transcript}`. Never waits, never starts the container. (`GET …/task` is a deprecated alias.) |
+| `GET /sandboxes/:name` | — | `{runtime, busy, model, repository, task, transcript}`. Never waits, never starts the container. |
 | `GET /sandboxes/:name/diff` | — | `{commit, status, stat, diff}` from `git` in the container. 409 with no repo, 502 when git fails. |
 
 `repository.status` is `idle|cloning|ready|failed`; `task.status` is
 `idle|running|done|failed`, with `error` on failure. Every error response
 is JSON: `{error, code?}` with a stable `code` (`task_busy`,
 `container_unavailable`, `git_failed`, …). Poll GET instead of holding a
-POST: POSTs always answer at once.
+POST: POSTs always answer at once. (The old `GET …/task` alias is gone.)
 
 ## Checks
 
@@ -180,6 +205,8 @@ bun install
 bun run check   # typecheck + lint + build + tests
 ```
 
-Tests live in `test/` (bun test): pure helpers, the broker round trip, the
-pump policy with fakes, and the agent server itself driven end to end with
-a faux model and real tools. No sleeps or wall-clock waits.
+Tests live in `test/` (bun test): pure helpers, the clone/tools/server
+adapters with fake sandbox clients, the broker round trip, the pump policy
+with fakes, the Dockerfile shim pin, and the agent server itself driven end
+to end with a faux model and real tools. No Void runtime under bun, no
+sleeps or wall-clock waits.
