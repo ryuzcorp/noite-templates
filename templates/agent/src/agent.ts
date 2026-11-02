@@ -12,6 +12,7 @@ import {
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import {
   fauxProvider,
+  fauxToolCall,
   type FauxProviderHandle,
 } from "@earendil-works/pi-ai/providers/faux";
 import {
@@ -49,7 +50,7 @@ import {
   type ModelRequestPayload,
 } from "./protocol";
 import { classifyRef, parseRepoHosts, validateRepositoryUrl, validRef } from "./repo-url";
-import { extractLastUserText, renderMessages, truncateText } from "./transcript";
+import { fauxTurn, renderMessages, truncateText } from "./transcript";
 
 /**
  * Pi Durable agent in a Worker Durable Object. One named sandbox is one
@@ -1218,10 +1219,15 @@ export class AgentSandbox extends Sandbox<Env> {
   }
 
   #topUpFaux(faux: FauxProviderHandle): void {
+    // Container mode runs pi-durable's standard tools (`bash`); worker mode
+    // runs this object's `exec`.
+    const shellTool = agentRuntime(this.#env.AGENT_RUNTIME) === "container" ? "bash" : "exec";
     while (faux.getPendingResponseCount() < 4) {
       faux.appendResponses([(context) => {
-        const task = extractLastUserText(context.messages) ?? "(no task text)";
-        return fauxAssistantMessage(`[faux test mode] No model call was made. The task was: ${task}`);
+        const turn = fauxTurn(context.messages, shellTool);
+        return turn.kind === "tool"
+          ? fauxAssistantMessage([fauxToolCall(turn.name, turn.args)])
+          : fauxAssistantMessage(turn.text);
       }]);
     }
   }
