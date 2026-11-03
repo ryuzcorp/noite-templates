@@ -49,7 +49,20 @@ export const GET = defineHandler(async (c) => {
     if (step === 'files' || step === 'all') {
       await sb.files.mkdir('/workspace/p', { recursive: true });
       await sb.files.writeFile('/workspace/p/a.txt', 'hello-probe');
-      out.stat = await race(sb.files.stat('/workspace/p/a.txt'), 8000);
+      const st = await race(sb.files.stat('/workspace/p/a.txt'), 8000);
+      // stat.size is a BigInt: not JSON-serializable, stringify it.
+      if (st.settled) {
+        const v = st.value as { type: unknown; size: unknown; modifiedAt: unknown };
+        st.value = {
+          type: v.type,
+          size: String(v.size),
+          modifiedAt:
+            v.modifiedAt instanceof Date
+              ? v.modifiedAt.toISOString()
+              : String(v.modifiedAt),
+        };
+      }
+      out.stat = st;
     }
     if (step === 'read' || step === 'all') {
       const r = await race(sb.files.readFile('/workspace/p/a.txt'), 8000);
@@ -98,6 +111,24 @@ export const GET = defineHandler(async (c) => {
         signal: AbortSignal.timeout(3000),
       });
       out.abortExitCode = await race(proc.exitCode, 12000);
+    }
+    if (step === 'kill') {
+      const proc = await sb.exec(['node', '-e', 'setTimeout(() => {}, 60000)']);
+      out.killResult = await race(proc.kill(9), 8000);
+      out.killExitCode = await race(proc.exitCode, 8000);
+    }
+    if (step === 'resize-err') {
+      const proc = await sb.exec(['node', '-e', 'setTimeout(() => {}, 60000)']);
+      try {
+        out.resizeResult = await race(proc.resize(100, 30), 8000);
+      } catch (error) {
+        out.resizeResult = {
+          settled: true,
+          value: `threw: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+      out.resizeExitCode = await race(proc.exitCode, 5000);
+      await race(proc.kill(9), 5000);
     }
   } catch (error) {
     out.error = error instanceof Error ? error.message : String(error);
