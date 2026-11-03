@@ -117,6 +117,18 @@ export const GET = defineHandler(async (c) => {
       out.killResult = await race(proc.kill(9), 8000);
       out.killExitCode = await race(proc.exitCode, 8000);
     }
+    if (step === 'long') {
+      // Does exitCode EVER settle (slow path with a timeout), or hang
+      // forever? 18 s race keeps the route under the worker limit.
+      const proc = await sb.exec(['node', '-e', 'process.exit(3)']);
+      if (proc.stdout) {
+        await race(new Response(proc.stdout).text(), 8000);
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+      const t0 = Date.now();
+      out.first = await race(proc.exitCode, 18000);
+      out.firstMs = Date.now() - t0;
+    }
     if (step === 'kill-timing') {
       // Process already exited long before kill: if the controller's
       // #exited is set (exitCode resolved there), kill returns instantly
