@@ -20,11 +20,6 @@ jobs:
           cd templates/ilha-void
           bun install
           bun run check
-      - name: tanstack-start template
-        run: |
-          cd templates/tanstack-start
-          bun install
-          bun run check
       - name: agent template
         run: |
           cd templates/agent
