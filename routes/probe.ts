@@ -117,6 +117,30 @@ export const GET = defineHandler(async (c) => {
       out.killResult = await race(proc.kill(9), 8000);
       out.killExitCode = await race(proc.exitCode, 8000);
     }
+    if (step === 'kill-timing') {
+      // Process already exited long before kill: if the controller's
+      // #exited is set (exitCode resolved there), kill returns instantly
+      // without a second exec. Instant => transport bug (H2); slow =>
+      // exitCode genuinely pending controller-side (H1 family).
+      const proc = await sb.exec(['node', '-e', 'process.exit(3)']);
+      // Drain stdout to EOF first (also lets the daemon-side exit settle).
+      if (proc.stdout) {
+        await race(new Response(proc.stdout).text(), 8000);
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      const t0 = Date.now();
+      let killError: string | null = null;
+      try {
+        await race(proc.kill(9), 8000);
+      } catch (error) {
+        killError = error instanceof Error ? error.message : String(error);
+      }
+      out.killMs = Date.now() - t0;
+      out.killError = killError;
+      const t1 = Date.now();
+      out.exitCode = await race(proc.exitCode, 5000);
+      out.exitMs = Date.now() - t1;
+    }
     if (step === 'resize-err') {
       const proc = await sb.exec(['node', '-e', 'setTimeout(() => {}, 60000)']);
       try {
