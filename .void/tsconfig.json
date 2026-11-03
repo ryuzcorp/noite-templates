@@ -1,0 +1,13 @@
+{
+  "files": [
+    "routes.d.ts",
+    "env.d.ts"
+  ],
+  "compilerOptions": {
+    "paths": {
+      "void/routes": [
+        "./routes.d.ts"
+      ]
+    }
+  }
+}

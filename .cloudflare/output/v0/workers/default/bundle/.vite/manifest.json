@@ -1,0 +1,27 @@
+{
+  "_handler-xmzz0U38-DCBPwY1C.js": {
+    "file": "assets/handler-xmzz0U38-DCBPwY1C.js",
+    "name": "handler-xmzz0U38"
+  },
+  "routes/probe.ts": {
+    "file": "assets/probe-B55uMerI.js",
+    "name": "probe",
+    "src": "routes/probe.ts",
+    "isDynamicEntry": true,
+    "imports": [
+      "_handler-xmzz0U38-DCBPwY1C.js"
+    ]
+  },
+  "virtual:cloudflare/worker-entry": {
+    "file": "index.js",
+    "name": "index",
+    "src": "virtual:cloudflare/worker-entry",
+    "isEntry": true,
+    "imports": [
+      "_handler-xmzz0U38-DCBPwY1C.js"
+    ],
+    "dynamicImports": [
+      "routes/probe.ts"
+    ]
+  }
+}
