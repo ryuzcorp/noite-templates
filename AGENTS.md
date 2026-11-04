@@ -5,7 +5,6 @@ One repo for every Noite app template. Each template is a folder under `template
 ## Layout
 
 - `templates/ilha-void/` — Ilha + Void (Vite) template.
-- `templates/tanstack-start/` — TanStack Start template.
 - `templates/agent/` — Pi Durable agent in a Worker DO, Sandbox container tool backend.
 - `.github/workflows/check.yml` — CI: `bun run check` in every template folder.
 
