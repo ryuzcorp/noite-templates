@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  Type,
   createModels,
   fauxAssistantMessage,
   fauxToolCall,
   normalizeContext,
   type AssistantMessageEvent,
 } from "@earendil-works/pi-ai";
+import { obj } from "@earendil-works/pi-schema";
 
 import { BROKER_MODEL_ID, BROKER_PROVIDER, createBrokerProvider } from "../src/broker";
 
@@ -34,7 +34,7 @@ describe("broker provider", () => {
     const context = normalizeContext({
       systemPrompt: "be brief",
       messages: [{ role: "user", content: "hi", timestamp: 1 }],
-      tools: [{ name: "bash", description: "run", parameters: Type.Object({}) }],
+      tools: [{ name: "bash", description: "run", parameters: obj({}) }],
     });
     const stream = broker.streamSimple(model, context, { temperature: 0.5, maxTokens: 99 });
     expect(stream).toBeDefined();

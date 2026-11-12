@@ -6,6 +6,7 @@ out
 dist
 *.tgz
 .void
+.cloudflare
 .wrangler
 .dev.vars
 .dev.vars*

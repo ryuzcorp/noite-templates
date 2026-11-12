@@ -7,7 +7,7 @@
         "name": "agent-container",
         "class_name": "ContainerDurableObject",
         "instance_type": "basic",
-        "image": "/home/ryuz/Developer/noite-wt/templates-agent/templates/agent/sandbox/Dockerfile"
+        "image": "/home/ryuz/Developer/noite-wt/noite-templates/templates/agent/sandbox/Dockerfile"
       }
     ]
   },
@@ -18,7 +18,7 @@
         "name": "agent-container",
         "class_name": "ContainerDurableObject",
         "instance_type": "basic",
-        "image": "/home/ryuz/Developer/noite-wt/templates-agent/templates/agent/sandbox/Dockerfile"
+        "image": "/home/ryuz/Developer/noite-wt/noite-templates/templates/agent/sandbox/Dockerfile"
       }
     ],
     "durable_objects": {
@@ -48,5 +48,5 @@
       }
     ]
   },
-  "text": "{\n  \"name\": \"noite-agent\",\n  \"containers\": [\n    {\n      \"name\": \"agent-container\",\n      \"class_name\": \"ContainerDurableObject\",\n      \"instance_type\": \"basic\",\n      \"image\": \"/home/ryuz/Developer/noite-wt/templates-agent/templates/agent/sandbox/Dockerfile\"\n    }\n  ],\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"AGENT\",\n        \"class_name\": \"AgentDurableObject\"\n      },\n      {\n        \"name\": \"CONTAINER\",\n        \"class_name\": \"ContainerDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-agent-v1\",\n      \"new_sqlite_classes\": [\n        \"AgentDurableObject\"\n      ]\n    },\n    {\n      \"tag\": \"void-durable-container-v1\",\n      \"new_sqlite_classes\": [\n        \"ContainerDurableObject\"\n      ]\n    }\n  ]\n}\n"
+  "text": "{\n  \"name\": \"noite-agent\",\n  \"containers\": [\n    {\n      \"name\": \"agent-container\",\n      \"class_name\": \"ContainerDurableObject\",\n      \"instance_type\": \"basic\",\n      \"image\": \"/home/ryuz/Developer/noite-wt/noite-templates/templates/agent/sandbox/Dockerfile\"\n    }\n  ],\n  \"durable_objects\": {\n    \"bindings\": [\n      {\n        \"name\": \"AGENT\",\n        \"class_name\": \"AgentDurableObject\"\n      },\n      {\n        \"name\": \"CONTAINER\",\n        \"class_name\": \"ContainerDurableObject\"\n      }\n    ]\n  },\n  \"migrations\": [\n    {\n      \"tag\": \"void-durable-agent-v1\",\n      \"new_sqlite_classes\": [\n        \"AgentDurableObject\"\n      ]\n    },\n    {\n      \"tag\": \"void-durable-container-v1\",\n      \"new_sqlite_classes\": [\n        \"ContainerDurableObject\"\n      ]\n    }\n  ]\n}\n"
 }
