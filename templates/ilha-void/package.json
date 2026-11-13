@@ -13,20 +13,20 @@
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "dependencies": {
-    "effect": "^4",
-    "hono": "^4.13.13",
-    "ilha": "^0.16.0"
+    "effect": "^4.1.4",
+    "hono": "^4.13.18",
+    "ilha": "^0.16.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5",
-    "@ilha/void": "^0.1.4",
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/bun": "^1.4.2",
-    "oxlint": "^1.86.0",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^7",
-    "vite": "^8",
-    "void": "^1.1.12"
+    "@cloudflare/workers-types": "^5.20261112.1",
+    "@ilha/void": "^0.1.6",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/bun": "^1.4.4",
+    "oxlint": "^1.93.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "void": "^1.8.0"
   },
   "trustedDependencies": [
     "esbuild",

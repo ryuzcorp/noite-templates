@@ -14,7 +14,7 @@
  * `exec` by design — the container itself is the boundary.
  */
 
-import { Type } from "@earendil-works/pi-ai";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -169,9 +169,9 @@ export function createWorkerTools(sandbox: WorkerToolsSandbox): ToolRegistration
   const execTool = defineTool({
     name: "exec",
     description: `Run a shell command in the sandbox container in ${REPO_DIR}. Returns stdout, stderr, and the exit code.`,
-    parameters: Type.Object({
-      command: Type.String({ description: "Shell command to run." }),
-      timeoutMs: Type.Optional(Type.Number({ description: "Kill the command after this many ms (default 60000, max 300000)." })),
+    parameters: obj({
+      command: str({ description: "Shell command to run." }),
+      timeoutMs: opt(num({ description: "Kill the command after this many ms (default 60000, max 300000)." })),
     }),
     execute: async (args) => execToolResult(sandbox, args.command, args.timeoutMs),
   });
@@ -179,8 +179,8 @@ export function createWorkerTools(sandbox: WorkerToolsSandbox): ToolRegistration
   const readFileTool = defineTool({
     name: "read_file",
     description: `Read a text file from the repository (${REPO_DIR}). Paths are relative to the repo, or absolute inside it.`,
-    parameters: Type.Object({
-      path: Type.String({ description: "Repo-relative path, e.g. src/index.ts." }),
+    parameters: obj({
+      path: str({ description: "Repo-relative path, e.g. src/index.ts." }),
     }),
     replay: "safe",
     execute: async (args) => readFileToolResult(sandbox, args.path),
@@ -189,9 +189,9 @@ export function createWorkerTools(sandbox: WorkerToolsSandbox): ToolRegistration
   const writeFileTool = defineTool({
     name: "write_file",
     description: `Write a text file in the repository (${REPO_DIR}; creates parent dirs). Paths are relative to the repo, or absolute inside it.`,
-    parameters: Type.Object({
-      path: Type.String({ description: "Repo-relative path." }),
-      content: Type.String({ description: "Full file content." }),
+    parameters: obj({
+      path: str({ description: "Repo-relative path." }),
+      content: str({ description: "Full file content." }),
     }),
     execute: async (args) => writeFileToolResult(sandbox, args.path, args.content),
   });
